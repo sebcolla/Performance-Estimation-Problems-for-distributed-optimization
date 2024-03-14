@@ -1,4 +1,4 @@
-# Performance-Estimation-Problems-PEP-for-distributed-optimization
+# Performance-Estimation-Problems-for-distributed-optimization
 
 This repository contains the codes used in the following paper:\
     S. Colla and J. M. Hendrickx, *Exploiting Agent Symmetries for Performance Analysis of Distribute Optimization Methods*, 2024.
