@@ -1,7 +1,9 @@
 function out = EXTRA_agents(N,K,alpha,lam,time_var_mat,eq_start,init,perf,fctParam)
 % Compute the worst-case performance of K steps of EXTRA for L-smooth and
-% mu-strongly convex local functions, using an agent-dependent PEP formulation [1]
-% REQUIREMENTS: PESTO toolbox with Mosek
+% mu-strongly convex local functions, using an agent-dependent PEP formulation [1].
+% The size of the resulting SDP PEP depends on the total number of iterations K
+% and on the number of agents N in the problem.
+% REQUIREMENTS: PESTO and YALMIP toolboxes with Mosek solver.
 % INPUT:
 %   N : number of agents
 %   K : number of iterations

@@ -1,8 +1,10 @@
 function out = EXTRA_symmetrized(Nlist,K,alpha,lam,time_var_mat,eq_start,init,perf,fctParam,Ninf)
 % Compute the worst-case performance of K steps of EXTRA for L-smooth and
 % mu-strongly convex local functions, using a compact symmetrized PEP
-% formulation from [1].
-% REQUIREMENTS: YALMIP toolbox with Mosek solver
+% formulation from [1]. The size of the resulting SDP PEP depends on
+% on the total number of iterations K and the number of equivalence classes of agents 
+% (given by the lenght of Nlist), but not on the total number of agents in the problem.
+% REQUIREMENTS: YALMIP toolbox with Mosek solver.
 % INPUTS:
 %   Nlist : list of length m=number of equivalence classes of agents.
 %   The elements in the list give the number of agents in each class and sum to N.
