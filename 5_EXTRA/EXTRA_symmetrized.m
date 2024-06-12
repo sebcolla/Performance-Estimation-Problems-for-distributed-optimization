@@ -33,8 +33,8 @@ function out = EXTRA_symmetrized(Nlist,K,alpha,lam,time_var_mat,eq_start,init,pe
 
 verbose = 1;                % Print the problem set up and the results
 verbose_solv = 0;           % Print details of the solver
-trace_Heuristic = 0;        % heuristic to minimize the dimension of the worst-case
-estimateW = 1;              % Estimate the worst averaging matrix
+trace_heuristic = 0;        % heuristic to minimize the dimension of the worst-case
+estim_W = 1;              % Estimate the worst averaging matrix
 
 % Constants for initial conditions
 D = 1;                     % Constant for the initial condition: ||x0 - xs||^2 <= D^2
@@ -216,7 +216,7 @@ for i = 1:nbPts
     end
 end
 
-% INTERPOLATION of communication network - Constraints for consensus Y = WX
+% INTERPOLATION of averaging matrix - Constraints for consensus Y = WX
 % Average preserving
 cons = cons + ( (Xcons-Wxcons).'*(GC)*(Xcons-Wxcons) == 0); % WARNING: ill-conditionned?
 % Spectral conditions
@@ -315,12 +315,13 @@ out.WCperformance = double(obj);
 out.GD = double(GD);
 out.GT = double(GC);
 out.GA = double(GA);
+
 if verbose
     fprintf("Solver output %7.5e, \t Solution status %s \n",out.WCperformance, out.solverDetails.info);
 end
 
 % Trace Heuristic
-if trace_Heuristic
+if trace_heuristic
     cons = cons + (obj >= out.WCperformance-1e-5);
     solverDetails  = optimize(cons,trace(GA),solver_opt);
     
@@ -332,7 +333,7 @@ end
 
 
 
-if estimateW
+if estim_W
     % Composition of G
     G = zeros(n*dimG);
     Nc = 0;
@@ -387,7 +388,7 @@ if estimateW
     out.X = X_fl;
     out.Y = Y_fl;
     
-    % Estimating worst W
+    % Estimating worst-case W
     [out.Wh,out.r,out.status] = cons_matrix_estimate([-lam,lam],X_fl,Y_fl,n);
 end
 end
