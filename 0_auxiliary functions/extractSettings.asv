@@ -27,7 +27,6 @@ function [n,t,alpha,type,mat,tv_mat,eq_start,init,perf,fctClass,fctParam,Setting
 %       S.perf: string to specify the performance criterion to consider in PEP
 %       S.fctClass: string to specify the class of functions
 %       S.fctParam: structure with the parameter values of the function class
-
 if ~isstruct(S)
     warning("settings should be provided in a single structure - default settings used");
     S = struct();
@@ -134,6 +133,7 @@ else % default
     init.grad = '';
     init.D = 1;
     init.E = 1;
+    init.gamma = alpha(1);
 end
 
 if isfield(S,'perf')

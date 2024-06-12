@@ -1,41 +1,59 @@
 function out = DGD_agents(Settings)
-% Compute the worst-case performance of t steps of DGD
+% Compute the worst-case performance of DGD under the 'Settings' provided
 % INPUT:
-%   n: number of agents
-%   t: number of iterations
-%   alpha: step-size (scalar or vector of t elements)
-%   avg_mat: averaging matrix description (one of the following options)
+%   Settings: structure with all the settings for the PEP for DGD. 
+%   The structure can include the following fields:
+%   (unspecified fields will be set to a default value)
+%       Settings.n: number of agents (default = 2)
+%       Settings.t: number of iterations (default = 1)
+%       Settings.alpha: step-size (scalar or vector of t elements) (default = 1)
+%       Settings.avg_mat: averaging matrix description (one of the following options)
 %           - (n x n) matrix
 %           - the second-largest eigenvalue modulus (scalar)
 %           - range of eigenvalues for the averaging matrix
 %           (except one): [lb, ub] with -1 < lb <= ub < 1.
-% possible additional inputs
-%   tv_mat: boolean, 1 if the averaging matrix can vary across the
-%   iteration and 0 otherwise.
-%   eq_start: boolean to indicate if the agents start with the same initial iterate
-%   init: string to choose the initial condition to consider in PEP
-%   perf: string to choose the performance criterion to consider in PEP
-%   fctClass:
-%   fctParam:
-% OUTPUT: structur with a lot of information about the worst-case solution
-% of the PEP
-%
+%           (default = 0.5)
+%       Settings.tv_mat: boolean, 1 if the averaging matrix can vary across the
+%                        iteration and 0 otherwise.
+%       Settings.eq_start: boolean to indicate if the agents start with the same initial iterate
+%       Settings.init: structure with details about the initial conditions
+%                init.x: string to specify the initial condition to
+%                        consider for the local iterates (x)
+%                init.D: real constant to use in the initial condition (cond_x <= D^2)
+%                init.grad: string to choose the initial condition to
+%                           consider for the local gradients
+%                init.E: real constant to use in the initial condition (cond_g <= E^2)
+%       Settings.perf: string to specify the performance criterion to consider in PEP
+%       Settings.fctClass: string to specify the class of functions
+%       Settings.fctParam: structure with the parameter values of the function class
+% OUTPUT: structure with details about the worst-case solution of the PEP
+%   solverDetails: structure with solver details
+%   WCperformance: worst-case performance value
+%   G:  Gram matrix solution of the PEP
+%   dualvalues_LMIs: dual values of the LMI PEP constraints
+%   dualnames_LMIs:  coresponding names of the LMI contraints
+%   dualvalues:      dual values of the scalar constraints
+%   dualnames:       coresponding names of the contraints
+%   Settings:        structure with all the settings used in the PEP
+%                   (including all the default values that have been set)
 
-verbose = 1;            % print the problem set up and the results
+
+verbose = 0;            % print the problem set up and the results
 trace_heuristic = 0;    % heuristic to minimize the dimension of the worst-case (1 to activate)
 eval_out = 0;           % evaluate the worst-case local iterates and gradients and add them to the output
 estim_W = 0;            % estimate the worst-case averaging matrix
 
 %%% Set up performance estimation settings %%%
 if nargin == 1
-    [n,t,alpha,type,mat,tv_mat,eq_start,init,perf,fctClass,fctParam] = extractSettings(Settings);
+    [n,t,alpha,type,mat,tv_mat,eq_start,init,perf,fctClass,fctParam,Settings] = extractSettings(Settings);
 else
     warning("settings should be provided in a single structure - default settings used")
-    [n,t,alpha,type,mat,tv_mat,eq_start,init,perf,fctClass,fctParam] = extractSettings(struct());
+    [n,t,alpha,type,mat,tv_mat,eq_start,init,perf,fctClass,fctParam,Settings] = extractSettings(struct());
 end
+
 if verbose
     fprintf("Settings provided for the PEP:\n");
-    fprintf("n=%d, t=%d, alpha=%1.2f, type=%s, tv_mat=%d, eq_start=%d,\ninit=%s, perf=%s, fctClass=%s,\n",n,t,alpha,type,tv_mat,eq_start,init.type,perf,fctClass);
+    fprintf("n=%d, t=%d, alpha=%1.2f, type=%s, tv_mat=%d, eq_start=%d,\ninit_x=%s, init_grad=%s, perf=%s, fctClass=%s,\n",n,t,alpha(1),type,tv_mat,eq_start,init.x,init.grad,perf,fctClass);
     fprintf('avg_mat = ['); fprintf('%g ', mat); fprintf(']\n');
     fprintf("------------------------------------------------------------------------------------------\n");
 end
@@ -58,43 +76,34 @@ G_saved = cell(n,t+1);  % local gradient vectors
 X(:,1) = P.MultiStartingPoints(n,eq_start);
 [G_saved(:,1),F_saved(:,1)] = LocalOracles(Fi,X(:,1));
 
-
-switch init.type
-    case 'bounded_navg_it_err' % avg_i ||xi0 - xs||^2 <= D^2
+% Initial condition for x0
+switch init.x
+    case {'bounded_navg_it_err','0'}      % avg_i ||xi0 - xs||^2 <= D^2
         P.AddConstraint(1/n*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= init.D^2);
-        %P.AddConstraint(1/n*sumcell(foreach(@(gi) (gi - 1/n*sumcell(G_saved(:,1)))^2,G_saved(:,1))) <= 1); % avg_i ||gi0 - avg_i(gi0)||^2 <= E^2
-        %[Gis,~] = LocalOracles(Fi,repmat({xs},n,1));
-        %P.AddMultiConstraints(@(gi) gi^2 <= 1, Gis);
-    case 'uniform_bounded_it_err' %initial condition: ||xi0 - xs||^2 <= D^2
+    case {'uniform_bounded_it_err','1'}   %||xi0 - xs||^2 <= D^2 for all i
         P.AddMultiConstraints(@(xi) (xi-xs)^2 <= init.D^2, X(:,1));
-    otherwise % default is bounded_avg_it_err
-        P.AddConstraint(1/n*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= init.D^2); % avg_i ||xi0 - xs||^2 <= D^2
+    case {'navg_it_err_combined_grad','2'}   % (avg_i ||xi0 - xs||^2) + gamma* (avg_i ||gi0 - avg_i(gi0)||^2) <= D^2
+        metric = 1/n*sumcell(foreach(@(x0, g0)(x0-xs)^2 + init.gamma*(g0 - 1/n*sumcell(G_saved(:,1)))^2,X(:,1), G_saved(:,1)));
+        P.AddConstraint(metric <= init.D^2);
+    otherwise % default is bounded_navg_it_err
+        P.AddConstraint(1/n*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= init.D^2);
 end
 
-% case 'diging_like'
-%         P.AddConstraint(1/N*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= D^2);   % avg_i ||xi0 - xs||^2 <= D^2
-%         P.AddConstraint(1/N*sumcell(foreach(@(gi) (gi - 1/N*sumcell(G_saved(:,1)))^2,G_saved(:,1))) <= E^2); % avg_i ||gi0 - avg_i(gi0)||^2 <= E^2
-%     case 'diging_like_combined'
-%         metric = 1/N*sumcell(foreach(@(x0, g0)(x0-xs)^2 + init.gamma*(g0 - 1/N*sumcell(G_saved(:,1)))^2,X(:,1), G_saved(:,1)));
-%         P.AddConstraint(metric <= D^2);
-%     case 'uniform_bounded_iterr_local_grad0'
-%         P.AddMultiConstraints(@(xi) (xi-xs)^2 <= D^2, X(:,1));                  % ||xi0 - xs||^2 <= D^2 for all i
-%         P.AddMultiConstraints(@(gi) gi^2 <= E^2, G_saved(:,1));                 % ||gi0||^2 <= E^2 for all i
-%     case 'bounded_navg_iterr_local_grad0'
-%         P.AddConstraint(1/N*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= D^2);   % avg_i ||xi0 - xs||^2 <= D^2
-%         P.AddConstraint(1/N*sumcell(foreach(@(gi) gi^2, G_saved(:,1))) <= E^2); % avg_i ||gi0||^2 <= E^2
-%     case 'uniform_bounded_iterr_local_grad*'
-%         P.AddMultiConstraints(@(xi) (xi-xs)^2 <= D^2, X(:,1));                  % ||xi0 - xs||^2 <= D^2 for all i
-%         [Gis,~] = LocalOracles(Fi,repmat({xs},N,1));
-%         P.AddMultiConstraints(@(gi) gi^2 <= E^2, Gis);                          % ||gi(x*)||^2 <= E^2 for all i
-%     case 'bounded_avg_iterr_local_grad*'
-%         P.AddConstraint(1/N*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= D^2);   % avg_i ||xi0 - xs||^2 <= D^2
-%         [Gis,~] = LocalOracles(Fi,repmat({xs},N,1));
-%         P.AddConstraint(1/N*sumcell(foreach(@(gi) gi^2, Gis)) <= E^2);          % avg_i ||gi(x*)||^2 <= E^2
-%     otherwise %'uniform_bounded_iterr_local_grad*'
-%         P.AddConstraint(1/N*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= D^2);   % avg_i ||xi0 - xs||^2 <= D^2
-%         [Gis,~] = LocalOracles(Fi,repmat({xs},N,1));
-%         P.AddMultiConstraints(@(gi) gi^2 <= E^2, Gis);
+% Initial condition for g0
+switch init.grad
+    case {'bounded_navg_grad0','0'}       % avg_i ||gi0||^2 <= E^2
+        P.AddConstraint(1/n*sumcell(foreach(@(gi) gi^2, G_saved(:,1))) <= init.E^2);
+    case {'uniform_bounded_grad0','1'}    % ||gi0||^2 <= E^2 for all i
+        P.AddMultiConstraints(@(gi) gi^2 <= init.E^2, G_saved(:,1));
+    case {'bounded_grad0_cons_err','2'}    % avg_i ||gi0 - avg_i(gi0)||^2 <= E^2
+        P.AddConstraint(1/n*sumcell(foreach(@(gi) (gi - 1/n*sumcell(G_saved(:,1)))^2,G_saved(:,1))) <= init.E^2);
+    case {'bounded_navg_grad*','3'}       % avg_i ||gi(x*)||^2 <= E^2
+        [Gis,~] = LocalOracles(Fi,repmat({xs},n,1));
+        P.AddConstraint(1/n*sumcell(foreach(@(gi) gi^2, Gis)) <= init.E^2);
+    case {'uniform_bounded_grad*','4'}    % ||gi(x*)||^2 <= E^2 for all i
+        [Gis,~] = LocalOracles(Fi,repmat({xs},n,1));
+        P.AddMultiConstraints(@(gi) gi^2 <= init.E^2, Gis);
+end
 
 % (3) Set up the averaging matrix
 W = P.DeclareConsensusMatrix(type,mat,tv_mat);
@@ -115,21 +124,23 @@ switch perf
         metric = 1/n*sumcell(foreach(@(xit)(xit-xs)^2,X(:,t+1)));
     case {'tavg_navg_it_err','1'} % avg_i avg_k ||x_i^k - x*||2
         metric = 1/((t+1)*n)*sumcell(foreach(@(xit)(xit-xs)^2,X(:,:)));
-    case {'it_err_last_navg','2'} % ||avg_i x_i^t - x*||^2
+    case {'navg_it_err_combined_grad','2'}
+        metric = 1/n*sumcell(foreach(@(xi,si)(xi-xs)^2 + init.gamma*(si - 1/n*sumcell(G_saved(:,t+1)))^2, X(:,t+1), G_saved(:,t+1)));
+    case {'it_err_last_navg','3'} % ||avg_i x_i^t - x*||^2
         xperf = sumcell(X(:,t+1))/(n);
         metric = (xperf-xs)^2;
-    case {'it_err_tavg_navg','3'} % ||avg_i avg_k x_i^k - x*||^2
+    case {'it_err_tavg_navg','4'} % ||avg_i avg_k x_i^k - x*||^2
         xperf = sumcell(X)/((t+1)*n);
         metric = (xperf-xs)^2;
-    case {'it_err_last_worst','4'} % max_i ||x_i^t - x*||2
+    case {'it_err_last_worst','5'} % max_i ||x_i^t - x*||2
         metric = (X{1,t+1}-xs)^2;
-    case {'fct_err_last_navg','5'} % last iterate agent average function error: F(xb(t)) - F(x*)
+    case {'fct_err_last_navg','6'} % last iterate agent average function error: F(xb(t)) - F(x*)
         xperf = sumcell(X(:,t+1))/(n);
         metric = Fav.value(xperf)-Fs;
-    case {'fct_err_last_worst','6'} % worst agent function error: max_i F(xi) - F(x*)
+    case {'fct_err_last_worst','7'} % worst agent function error: max_i F(xi) - F(x*)
         xperf = X{1,t+1};
         metric = Fav.value(xperf)-Fs;
-    case {'fct_err_tavg_navg','7'} % average iterate of agent average function error: F(avg_k xb(k)) - F(x*)
+    case {'fct_err_tavg_navg','8'} % average iterate of agent average function error: F(avg_k xb(k)) - F(x*)
         xperf = sumcell(X)/((t+1)*n);
         metric = Fav.value(xperf)-Fs;
     otherwise % default: last_navg_fct_err
@@ -155,7 +166,7 @@ if verbose
     end
 end
 out = P.solve(verbose+1);
-if verbose, out, end
+out.Settings = Settings;
 
 % (7) Evaluate the output
 if eval_out || estim_W
@@ -189,6 +200,7 @@ if estim_W
 end
 
 if verbose
+    out
     fprintf("--------------------------------------------------------------------------------------------\n");
     switch type
         case 'spectral_relaxed'
