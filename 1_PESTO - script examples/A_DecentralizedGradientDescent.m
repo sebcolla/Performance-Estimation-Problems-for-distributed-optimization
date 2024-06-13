@@ -82,7 +82,7 @@ end
 for k = 1:K    
     Y(:,k) = W.consensus(X(:,k));                                       % Consensus step: Y = WX
     X(:,k+1) = foreach(@(y,G) y-alpha(k)*G, Y(:,k), G_saved(:,k));      % Gradient step
-    %          for each agent: (expression for the update, variables to input in the expression) 
+    %          for each agent: (expression for the update, cells of variables to input in the expression) 
     [G_saved(:,k+1),F_saved(:,k+1)] = LocalOracles(Fi,X(:,k+1));        % Eval F and G at k+1 (for all agents)
     % not always needed for the points at K+1 (depending on the perf measure).
 end

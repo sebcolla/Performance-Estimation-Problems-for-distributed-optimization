@@ -1,4 +1,4 @@
-function [n,t,alpha,type,mat,tv_mat,eq_start,init,perf,fctClass,fctParam,Settings] = extractSettings(S)
+function [n,t,alpha,ATC,type,avg_mat,tv_mat,eq_start,init,perf,fctClass,fctParam,Settings] = extractSettings(S)
 % The 'extractSettings' function extracts the settings provided in S, and
 % assign default values for those not specified
 % INPUT:
@@ -33,18 +33,21 @@ if ~isstruct(S)
     S = struct();
 end
 
+% Number of agents
 if isfield(S,'n')
     n = S.n;
 else % default
     n = 2;
 end
 
+% Number of iterations
 if isfield(S,'t')
     t = S.t;
 else % default
     t = 1;
 end
 
+% step-size(s)
 if isfield(S,'alpha')
     if length(S.alpha) == 1 % use the same step-size for each iteration
         alpha = S.alpha*ones(1,t);
@@ -57,45 +60,64 @@ else % default
     alpha = 1*ones(1,t);
 end
 
+% ATC scheme for the algorithm ?
+if isfield(S,'ATC')
+    ATC = S.ATC;
+else
+    ATC = 0;
+end
+
+% averaging matrix description
 if isfield(S,'avg_mat')
     % (a) Exact formulation (fixed network W)
     if all(size(S.avg_mat) == [n,n])
         type = 'exact';
-        mat = S.avg_mat;
+        avg_mat = S.avg_mat;
     
     % (b) Spectral formulation for symmetric (generalized) doubly stochastic averaging matrices
     elseif length(S.avg_mat)==1 % SLEM description
         type = 'spectral_relaxed'; 
-        mat = [-S.avg_mat,S.avg_mat];
+        avg_mat = [-S.avg_mat,S.avg_mat];
     elseif length(S.avg_mat)==2 % eigenvalue range
         type = 'spectral_relaxed'; 
-        mat = S.avg_mat;    
+        avg_mat = S.avg_mat;    
     else
         error("the field 'avg_mat' should be a matrix of size n x n (fixed averaging matrix), or a vector of length 1 (SLEM), or length 2 (range of eigenvalues)");
     end
+elseif isfield(S,'lam') % alternative notation
+    type = 'spectral_relaxed';
+    if length(S.avg_mat)==1 % SLEM description
+        avg_mat = [-S.lam,S.lam];
+    elseif length(S.avg_mat)==2 % eigenvalue range
+        avg_mat = S.lam;
+    end
 else % default
     type = 'spectral_relaxed';
-    mat = [-0.5,0.5]; % SLEM
+    avg_mat = [-0.5,0.5]; % SLEM
 end
 
+% is the averaging matrix time-varying ?
 if isfield(S,'tv_mat')
     tv_mat = S.tv_mat;
 else % default
     tv_mat = 0;
 end
 
+% equal start for all the agents
 if isfield(S,'eq_start')
     eq_start = S.eq_start;
 else % default
     eq_start = 0;
 end
 
+% class of local functions
 if isfield(S,'fctClass')
     fctClass = convertStringsToChars(S.fctClass);
 else % default
     fctClass = 'SmoothStronglyConvex';
 end
 
+% parameters for the class of functions
 if isfield(S,'fctParam')
     fctParam = S.fctParam;
 else % default
@@ -112,6 +134,7 @@ else % default
     end
 end
 
+% initial conditions
 if isfield(S,'init')
     init = lower(S.init);
     if ~isfield(S.init,'D')
@@ -136,14 +159,16 @@ else % default
     init.E = 1;
 end
 
+% Performance Criterion
 if isfield(S,'perf')
     perf = lower(S.perf);
 else % default
     perf = 'fct_err_last_navg';
 end
 
-Settings.n = n; Settings.t = t; Settings.alpha = alpha;
-Settings.type = type; Settings.mat = mat; Settings.tv_mat=tv_mat;
+% Summary of the Settings
+Settings.n = n; Settings.t = t; Settings.alpha = alpha; Settings.ATC = ATC;
+Settings.type = type; Settings.avg_mat = avg_mat; Settings.tv_mat=tv_mat;
 Settings.eq_start = eq_start; Settings.init= init; Settings.perf=perf;
 Settings.fctClass = fctClass; Settings.fctParam = fctParam;
 

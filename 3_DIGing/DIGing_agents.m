@@ -1,4 +1,4 @@
-function out = DGD_agents(Settings)
+function out = DIGing_agents(Settings)
 % Compute the worst-case performance of DGD under the 'Settings' provided
 % INPUT:
 %   Settings: structure with all the settings for the PEP for DGD. 
@@ -7,6 +7,7 @@ function out = DGD_agents(Settings)
 %       Settings.n: number of agents (default = 2)
 %       Settings.t: number of iterations (default = 1)
 %       Settings.alpha: step-size (scalar or vector of t elements) (default = 1)
+%       Settings.ATC: boolean to indicate if ATC scheme of the algorithm should be used (1) or not (0)
 %       Settings.avg_mat: averaging matrix description (one of the following options)
 %           - (n x n) matrix
 %           - the second-largest eigenvalue modulus (scalar)
@@ -39,7 +40,7 @@ function out = DGD_agents(Settings)
 %                   (including all the default values that have been set)
 
 
-verbose = 0;            % print the problem set up and the results
+verbose = 1;            % print the problem set up and the results
 trace_heuristic = 0;    % heuristic to minimize the dimension of the worst-case (1 to activate)
 eval_out = 0;           % evaluate the worst-case local iterates and gradients and add them to the output
 estim_W = 0;            % estimate the worst-case averaging matrix
@@ -54,7 +55,7 @@ end
 
 if verbose
     fprintf("Settings provided for the PEP:\n");
-    fprintf("n=%d, t=%d, alpha=%1.2f, type=%s, tv_mat=%d, eq_start=%d,\ninit_x=%s, init_grad=%s, perf=%s, fctClass=%s,\n",n,t,alpha(1),type,tv_mat,eq_start,init.x,init.grad,perf,fctClass);
+    fprintf("n=%d, t=%d, alpha=%1.2f, ATC =%d, type=%s, tv_mat=%d, eq_start=%d,\ninit_x=%s, init_grad=%s, perf=%s, fctClass=%s,\n",n,t,alpha(1),ATC,type,tv_mat,eq_start,init.x,init.grad,perf,fctClass);
     fprintf('avg_mat = ['); fprintf('%g ', mat); fprintf(']\n');
     fprintf("------------------------------------------------------------------------------------------\n");
 end
@@ -68,13 +69,15 @@ returnOpt = 0; % or 1 if you need the optimal point of each local function
 [xs,Fs] = Fav.OptimalPoint();
 
 % Iterates cells
-X = cell(n, t+1);       % local iterates
-F_saved = cell(n,t+1);  % local function values
-G_saved = cell(n,t+1);  % local gradient vectors
+X = cell(n, t+1); Y = cell(n, t);   % local iterates
+S = cell(n, t);                     % S contains the local estimates of the global gradient
+F_saved = cell(n,t+1);
+G_saved = cell(n,t+1);
 
 % (2) Set up the starting points and initial conditions
 X(:,1) = P.MultiStartingPoints(n,eq_start);
 [G_saved(:,1),F_saved(:,1)] = LocalOracles(Fi,X(:,1));
+S(:,1) = G_saved(:,1);  % s0 = g0
 
 % Initial condition for x0
 switch init.x
@@ -82,14 +85,16 @@ switch init.x
         P.AddConstraint(1/n*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= init.D^2);
     case {'uniform_bounded_it_err','1'}   %||xi0 - xs||^2 <= D^2 for all i
         P.AddMultiConstraints(@(xi) (xi-xs)^2 <= init.D^2, X(:,1));
-    case {'navg_it_err_combined_grad','2'}   % (avg_i ||xi0 - xs||^2) + gamma* (avg_i ||gi0 - avg_i(gi0)||^2) <= D^2
-        metric = 1/n*sumcell(foreach(@(x0, g0)(x0-xs)^2 + init.gamma*(g0 - 1/n*sumcell(G_saved(:,1)))^2,X(:,1), G_saved(:,1)));
-        P.AddConstraint(metric <= init.D^2);
+    case {'navg_it_err_combined_grad','2'} % to use for CONV RATE analysis
+        S(:,1) = P.MultiStartingPoints(n,eq_start); % s0 is a variable s.t. sum_i si0 = sum_i gi0
+        P.AddConstraint((sumcell(S(:,1)) - sumcell(G_saved(:,1)))^2 == 0);
+        metric = 1/n*sumcell(foreach(@(x0, s0)(x0-xs)^2 + init.gamma*(s0 - 1/n*sumcell(G_saved(:,1)))^2,X(:,1), S(:,1)));
+        P.AddConstraint(metric <= init.D^2); % (avg_i ||xi0 - xs||^2) + gamma* (avg_i ||s0 - avg_i(gi0)||^2) <= D^2
     otherwise % default is bounded_navg_it_err
         P.AddConstraint(1/n*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= init.D^2);
 end
 
-% Initial condition for g0
+% Initial condition for g0(=s0)
 switch init.grad
     case {'bounded_navg_grad0','0'}       % avg_i ||gi0||^2 <= E^2
         P.AddConstraint(1/n*sumcell(foreach(@(gi) gi^2, G_saved(:,1))) <= init.E^2);
@@ -98,24 +103,37 @@ switch init.grad
     case {'bounded_grad0_cons_err','2'}    % avg_i ||gi0 - avg_i(gi0)||^2 <= E^2
         P.AddConstraint(1/n*sumcell(foreach(@(gi) (gi - 1/n*sumcell(G_saved(:,1)))^2,G_saved(:,1))) <= init.E^2);
     case {'bounded_navg_grad*','3'}       % avg_i ||gi(x*)||^2 <= E^2
-        [gis,~] = LocalOracles(Fi,repmat({xs},n,1));
-        P.AddConstraint(1/n*sumcell(foreach(@(gi) gi^2, gis)) <= init.E^2);
+        [Gis,~] = LocalOracles(Fi,repmat({xs},n,1));
+        P.AddConstraint(1/n*sumcell(foreach(@(gi) gi^2, Gis)) <= init.E^2);
     case {'uniform_bounded_grad*','4'}    % ||gi(x*)||^2 <= E^2 for all i
-        [gis,~] = LocalOracles(Fi,repmat({xs},n,1));
-        P.AddMultiConstraints(@(gi) gi^2 <= init.E^2, gis);
+        [Gis,~] = LocalOracles(Fi,repmat({xs},n,1));
+        P.AddMultiConstraints(@(gi) gi^2 <= init.E^2, Gis);
+    otherwise % default (for DIGing) is 'bounded_grad0_cons_err'
+        if ~strcmp(init.x,'navg_it_err_combined_grad') && ~strcmp(init.x,'2')
+            P.AddConstraint(1/n*sumcell(foreach(@(gi) (gi - 1/n*sumcell(G_saved(:,1)))^2,G_saved(:,1))) <= init.E^2);
+        end
 end
 
 % (3) Set up the averaging matrix
 W = P.DeclareConsensusMatrix(type,mat,tv_mat);
 
-% (4) Algorithm (DGD)
+% (4) Algorithm (DIGing)
 % Iterations
 for k = 1:t
-    % x(k+1) = W x(k) - alpha*g(k)
-    X(:,k+1) = foreach(@(y,G) y-alpha(k)*G, W.consensus(X(:,k)), G_saved(:,k)); % update for each agent
-    %          foreach(expression for the update, cells of variables to input in the expression)
-    [G_saved(:,k+1),F_saved(:,k+1)] = LocalOracles(Fi,X(:,k+1));        % Eval fi and gi at k+1 (for all agents)
-    % not always needed for the points at t+1 (depending on the perf measure).
+    if ATC % ATC-DIGing
+        X(:,k+1) = W.consensus(foreach(@(x,S) x-alpha(k)*S, X(:,k), S(:,k)));
+        [G_saved(:,k+1),F_saved(:,k+1)] = LocalOracles(Fi,X(:,k+1));
+        if k<t || strcmp(perf,'navg_it_err_combined_grad')
+            S(:,k+1) = W.consensus(foreach(@(s,G2,G1) s + G2-G1, S(:,k), G_saved(:,k+1), G_saved(:,k)));
+        end
+    else % DIGing
+        X(:,k+1) = foreach(@(Wx,S) Wx-alpha(k)*S, W.consensus(X(:,k)), S(:,k)); % update for each agent
+        %          foreach(expression for the update, cells of variables to input in the expression)
+        [G_saved(:,k+1),F_saved(:,k+1)] = LocalOracles(Fi,X(:,k+1));
+        if k<t || strcmp(perf,'navg_it_err_combined_grad')
+            S(:,k+1) = foreach(@(Ws,G2,G1) Ws + G2-G1, W.consensus(S(:,k)), G_saved(:,k+1), G_saved(:,k));
+        end
+    end
 end
 
 % (5) Set up the performance measure
@@ -125,7 +143,7 @@ switch perf
     case {'tavg_navg_it_err','1'} % avg_i avg_k ||x_i^k - x*||2
         metric = 1/((t+1)*n)*sumcell(foreach(@(xit)(xit-xs)^2,X(:,:)));
     case {'navg_it_err_combined_grad','2'}
-        metric = 1/n*sumcell(foreach(@(xi,si)(xi-xs)^2 + init.gamma*(si - 1/n*sumcell(G_saved(:,t+1)))^2, X(:,t+1), G_saved(:,t+1)));
+        metric = 1/n*sumcell(foreach(@(xi,si)(xi-xs)^2 + init.gamma*(si - 1/n*sumcell(G_saved(:,t+1)))^2, X(:,t+1), S(:,t+1)));
     case {'it_err_last_navg','3'} % ||avg_i x_i^t - x*||^2
         xperf = sumcell(X(:,t+1))/(n);
         metric = (xperf-xs)^2;
@@ -143,9 +161,8 @@ switch perf
     case {'fct_err_tavg_navg','8'} % average iterate of agent average function error: F(avg_k xb(k)) - F(x*)
         xperf = sumcell(X)/((t+1)*n);
         metric = Fav.value(xperf)-Fs;
-    otherwise % default: last_navg_fct_err
-        xperf = sumcell(X(:,t+1))/(n);
-        metric = Fav.value(xperf)-Fs;
+    otherwise % default: 'navg_last_it_err'
+        metric = 1/n*sumcell(foreach(@(xit)(xit-xs)^2,X(:,t+1)));
 end
 
 P.PerformanceMetric(metric);
@@ -157,10 +174,10 @@ P.TraceHeuristic(trace_heuristic);
 if verbose
     switch type
         case 'spectral_relaxed'
-            fprintf("Spectral PEP formulation for DGD after %d iterations, with %d agents \n",t,n);
+            fprintf("Spectral PEP formulation for DIGing after %d iterations, with %d agents \n",t,n);
             fprintf("Using the following spectral range for the averaging matrix: [%1.2f, %1.2f] \n",mat)
         case 'exact'
-            fprintf("Exact PEP formulation for DGD after %d iterations, with %d agents \n",t,n);
+            fprintf("Exact PEP formulation for DIGing after %d iterations, with %d agents \n",t,n);
             fprintf("The used averaging matrix is\n")
             disp(mat);
     end
@@ -169,7 +186,7 @@ out = P.solve(verbose+1);
 out.Settings = Settings;
 
 % (7) Evaluate the output
-if eval_out
+if eval_out || estim_W
     d = length(double(X{1,1}));
     % Evaluating the X and Y solution of PEP.
     Xv = zeros(n,t,d); grad = zeros(n,t+1,d);
