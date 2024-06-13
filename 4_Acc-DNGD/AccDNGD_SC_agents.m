@@ -1,6 +1,7 @@
-function out = DIGing_agents(Settings)
-% Compute the worst-case performance of DIGing under the 'Settings' provided.
-% The algorithm has been proposed in [1] and is suited to smooth and strongly-convex functions.
+function out = AccDNGD_SC_agents(Settings)
+% Compute the worst-case performance of the Acc-DNGD-SC under the 'Settings' provided. 
+% The algorithm has been proposed in [1] and is suited to smooth and strongly-convex functions. 
+% Another version of the algorithm exists for convex functions.
 % INPUT:
 %   Settings: structure with all the settings for the PEP for DGD. 
 %   The structure can include the following fields:
@@ -40,10 +41,9 @@ function out = DIGing_agents(Settings)
 %   Settings:        structure with all the settings used in the PEP
 %                   (including all the default values that have been set)
 %
-% References
-%   [1] A. Nedic, A. Olshevsky, and W. Shi, “Achieving geometric convergence
-%   for distributed optimization over time-varying graphs,” SIAM Journal on
-%   Optimization, 2016.
+% References:
+%[1] G. Qu and N. Li, “Accelerated distributed nesterov gradient descent”,
+%IEEE Transactions on Automatic Control, 2020.
 
 verbose = 1;            % print the problem set up and the results
 trace_heuristic = 0;    % heuristic to minimize the dimension of the worst-case (1 to activate)
@@ -74,15 +74,22 @@ returnOpt = 0; % or 1 if you need the optimal point of each local function
 [xs,Fs] = Fav.OptimalPoint();
 
 % Iterates cells
-X = cell(n, t+1);       % local iterates
-S = cell(n, t);         % S contains the local estimates of the global gradient
-F_saved = cell(n,t+1);
-G_saved = cell(n,t+1);
+X  = cell(n,t+1);
+V  = cell(n,t+1);
+Y  = cell(n,t+1);
+S  = cell(n,t);
+    
+% F and Grad eval in Y iterates
+F_saved = cell(n,t);
+G_saved = cell(n,t);
 
-% (2) Set up the starting points and initial conditions
+% (2) Set up the starting point and initial condition
 X(:,1) = P.MultiStartingPoints(n,eq_start);
-[G_saved(:,1),F_saved(:,1)] = LocalOracles(Fi,X(:,1));
-S(:,1) = G_saved(:,1);  % s0 = g0
+V(:,1) = X(:,1);
+Y(:,1) = X(:,1);
+% x0 = v0 = y0
+[G_saved(:,1),F_saved(:,1)] = LocalOracles(Fi,Y(:,1));
+S(:,1) = G_saved(:,1); % s0 = g0
 
 % Initial condition for x0
 switch init.x
@@ -90,16 +97,14 @@ switch init.x
         P.AddConstraint(1/n*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= init.D^2);
     case {'uniform_bounded_it_err','1'}   %||xi0 - xs||^2 <= D^2 for all i
         P.AddMultiConstraints(@(xi) (xi-xs)^2 <= init.D^2, X(:,1));
-    case {'navg_it_err_combined_s','2'} % to use for CONV RATE analysis of DIGing
-        S(:,1) = P.MultiStartingPoints(n,eq_start); % s0 is a variable s.t. sum_i si0 = sum_i gi0
-        P.AddConstraint((sumcell(S(:,1)) - sumcell(G_saved(:,1)))^2 == 0);
-        metric = 1/n*sumcell(foreach(@(x0, s0)(x0-xs)^2 + init.gamma*(s0 - 1/n*sumcell(G_saved(:,1)))^2,X(:,1), S(:,1)));
+    case {'navg_it_err_combined_grad','2'}
+        metric = 1/n*sumcell(foreach(@(x0, g0)(x0-xs)^2 + init.gamma*(g0 - 1/n*sumcell(G_saved(:,1)))^2,X(:,1), G_saved(:,1)));
         P.AddConstraint(metric <= init.D^2); % (avg_i ||xi0 - xs||^2) + gamma* (avg_i ||s0 - avg_i(gi0)||^2) <= D^2
     otherwise % default is bounded_navg_it_err
         P.AddConstraint(1/n*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= init.D^2);
 end
 
-% Initial condition for g0(=s0)
+% Initial condition for g0
 switch init.grad
     case {'bounded_navg_grad0','0'}       % avg_i ||gi0||^2 <= E^2
         P.AddConstraint(1/n*sumcell(foreach(@(gi) gi^2, G_saved(:,1))) <= init.E^2);
@@ -114,7 +119,7 @@ switch init.grad
         [Gis,~] = LocalOracles(Fi,repmat({xs},n,1));
         P.AddMultiConstraints(@(gi) gi^2 <= init.E^2, Gis);
     otherwise % default (for DIGing) is 'bounded_grad0_cons_err'
-        if ~strcmp(init.x,'navg_it_err_combined_s') && ~strcmp(init.x,'2')
+        if ~strcmp(init.x,'navg_it_err_combined_grad') && ~strcmp(init.x,'2')
             P.AddConstraint(1/n*sumcell(foreach(@(gi) (gi - 1/n*sumcell(G_saved(:,1)))^2,G_saved(:,1))) <= init.E^2);
         end
 end
@@ -122,21 +127,28 @@ end
 % (3) Set up the averaging matrix
 W = P.DeclareConsensusMatrix(type,mat,tv_mat);
 
-% (4) Algorithm (DIGing)
-% Iterations
-for k = 1:t
-    if ATC % ATC-DIGing
-        X(:,k+1) = W.consensus(foreach(@(x,S) x-alpha(k)*S, X(:,k), S(:,k)));
-        [G_saved(:,k+1),F_saved(:,k+1)] = LocalOracles(Fi,X(:,k+1));
-        if k<t || strcmp(perf,'navg_it_err_combined_grad')
-            S(:,k+1) = W.consensus(foreach(@(s,G2,G1) s + G2-G1, S(:,k), G_saved(:,k+1), G_saved(:,k)));
-        end
-    else % DIGing
-        X(:,k+1) = foreach(@(Wx,S) Wx-alpha(k)*S, W.consensus(X(:,k)), S(:,k)); % update for each agent
-        %          foreach(expression for the update, cells of variables to input in the expression)
-        [G_saved(:,k+1),F_saved(:,k+1)] = LocalOracles(Fi,X(:,k+1));
-        if k<t || strcmp(perf,'navg_it_err_combined_grad')
+% (4) Algorithm (Acc-DNGD-SC)
+theta = sqrt(fctParam.mu*alpha(1));
+if ~ATC % Acc-DNGD-SC
+    for k = 1:t
+        Wy = W.consensus(Y(:,k));
+        X(:,k+1) = foreach(@(Wy,s) Wy - alpha(k)*s, Wy, S(:,k));
+        V(:,k+1) = foreach(@(Wv,Wy,s) (1-theta)*Wv + theta*Wy - alpha(k)/theta*s, W.consensus(V(:,k)), Wy, S(:,k));
+        Y(:,k+1) = foreach(@(x,v) (x+theta*v)/(1+theta), X(:,k+1), V(:,k+1));
+        [G_saved(:,k+1),F_saved(:,k+1)] = LocalOracles(Fi,Y(:,k+1));
+        if k<t || strcmp(perf,'navg_last_it_err_combined_with_s')
             S(:,k+1) = foreach(@(Ws,G2,G1) Ws + G2-G1, W.consensus(S(:,k)), G_saved(:,k+1), G_saved(:,k));
+        end
+    end
+else % ATC version of Acc-DNGD-SC
+    for k = 1:t
+        %Wy = W.consensus(Y(:,k));
+        X(:,k+1) = W.consensus(foreach(@(y,s) y - alpha(k)*s,Y(:,k),S(:,k)));
+        V(:,k+1) = W.consensus(foreach(@(v,y,s) (1-theta)*v + theta*y - alpha(k)/theta*s,V(:,k),Y(:,k),S(:,k)));
+        Y(:,k+1) = foreach(@(x,v) (x+theta*v)/(1+theta),X(:,k+1),V(:,k+1));
+        [G_saved(:,k+1),F_saved(:,k+1)] = LocalOracles(Fi,Y(:,k+1));
+        if k<t || strcmp(perf,'navg_last_it_err_combined_with_s')
+            S(:,k+1) = W.consensus(foreach(@(s,G2,G1) s + G2-G1, S(:,k), G_saved(:,k+1), G_saved(:,k)));
         end
     end
 end
