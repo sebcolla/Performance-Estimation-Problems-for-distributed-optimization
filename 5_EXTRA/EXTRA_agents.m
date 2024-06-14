@@ -1,5 +1,5 @@
 function out = EXTRA_agents(Settings)
-% Compute the worst-case performance of DIGing under the 'Settings' provided.
+% Compute the worst-case performance of EXTRA under the 'Settings' provided.
 % The algorithm has been proposed in [1].
 % INPUT:
 %   Settings: structure with all the settings for the PEP for DGD. 
