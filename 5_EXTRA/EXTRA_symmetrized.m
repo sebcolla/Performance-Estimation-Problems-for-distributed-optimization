@@ -1,8 +1,8 @@
-function out = EXTRA_symmetrized(Nlist,K,alpha,lam,time_var_mat,eq_start,init,perf,fctParam,Ninf)
+function out = EXTRA_symmetrized(Settings) %Nlist,K,alpha,lam,time_var_mat,eq_start,init,perf,fctParam,Ninf)
 % Compute the worst-case performance of K steps of EXTRA for L-smooth and
 % mu-strongly convex local functions, using a compact symmetrized PEP
 % formulation from [1]. The size of the resulting SDP PEP depends on
-% on the total number of iterations K and the number of equivalence classes of agents 
+% on the total number of iterations K and the number of equivalence classes of agents
 % (given by the lenght of Nlist), but not on the total number of agents in the problem.
 % REQUIREMENTS: YALMIP toolbox with Mosek solver.
 % INPUTS:
@@ -19,134 +19,153 @@ function out = EXTRA_symmetrized(Nlist,K,alpha,lam,time_var_mat,eq_start,init,pe
 %   perf : string to choose the performance criterion to consider
 %   fctParam : struct with values for 'L' and 'mu'for each equivalence class of agents
 %   Ninf :  if 1, compute the solution for N->infty.
-%           In that case Nlist provides size proportions of each classes. 
+%           In that case Nlist provides size proportions of each classes.
 % OUTPUT: structure with details about the worst-case solution
 % of the PEP, including
 %   WCperformance : worst-case value.
 %   solverDetails : details given by the Mosek solver
 
-% Source: 
+% Source:
 %   [1] S. Colla and J. M. Hendrickx, "Exploiting Agent Symmetries for Performance Analysis of Distributed
 %       Optimization Methods", 2024.
 
-% TO DO alert on conditioning
+verbose = 1;            % Print the problem set up and the results
+verbose_solv = 0;       % Print details of the solver
+trace_heuristic = 0;    % heuristic to minimize the dimension of the worst-case
+eval_out = 0;           % evaluate the worst-case local iterates and gradients and add them to the output
+estim_W = 0;            % Estimate the worst averaging matrix
 
-verbose = 1;                % Print the problem set up and the results
-verbose_solv = 0;           % Print details of the solver
-trace_heuristic = 0;        % heuristic to minimize the dimension of the worst-case
-estim_W = 1;              % Estimate the worst averaging matrix
 
-% Constants for initial conditions
-D = 1;                     % Constant for the initial condition: ||x0 - xs||^2 <= D^2
-E = 1;                     % Constant for initial condition on s_0
+%%% Set up performance estimation settings %%%
+if nargin == 1
+    Settings = extractSettings(Settings);
+else
+    warning("settings should be provided in a single structure - default settings used")
+    Settings = extractSettings(struct());
+end
+nlist=Settings.nlist; ninf=Settings.ninf; t=Settings.t; alpha=Settings.alpha;
+type=Settings.type; lamW=Settings.avg_mat; tv_mat=Settings.tv_mat;
+eq_start=Settings.eq_start; init=Settings.init; perf=Settings.perf;
+fctClass=Settings.fctClass; fctParam=Settings.fctParam;
+
+assert(strcmp(fctClass,'SmoothStronglyConvex'),"EXTRA_symmetrized only applies to 'SmoothStronglyConvex' (possibly with mu = 0) functions");
+% other classes of function requires different interpolation conditions
+assert(strcmp(type,'spectral_relaxed'),"EXTRA_symmetrized only applies to spectral description of the averaging matrix (range of eigenvalues)");
+
+if verbose
+    fprintf("Settings provided for the PEP:\n");
+    fprintf('nlist = ['); fprintf('%g ', nlist); fprintf('] ');
+    fprintf("ninf=%d, t=%d, alpha=%1.2f, type=%s, tv_mat=%d, eq_start=%d,\ninit_x=%s, init_grad=%s, perf=%s, fctClass=%s,\n",ninf,t,alpha(1),type,tv_mat,eq_start,init.x,init.grad,perf,fctClass);
+    fprintf('avg_mat = ['); fprintf('%g ', lamW); fprintf(']\n');
+    fprintf("------------------------------------------------------------------------------------------\n");
+end
 
 % Network of agents
-n = sum(Nlist);
-m = length(Nlist);
-nu = Nlist;
+n = sum(nlist);    % total number of agents
+r = length(nlist); % number of equivalence classes of agents
+nu = nlist;        % list to indicate the number of agents in each class
 
-% Number of agents tends to infty ?
-if nargin < 10
-    Ninf = 0;
+switch perf
+    case {'it_err_last_worst','fct_err_last_worst'}
+        assert(r == 2,"You should provide 2 subsets of agents: [1 (the worst), N-1 (the rest)]")
+    case {'it_err_last_percentile_worst', 'fct_err_last_percentile_worst'}
+        assert(r == 3,"You should provide 3 subsets of agents, i.e. [(1-p)N, 1, p*N-1], where p is the percentile we evaluate")
 end
-if ~Ninf % N finite
+
+if ~ninf % n finite
     prop = nu/n; % proportion of agents in each class
     over_n = 1/n;
-else % N -> infty
+else % n -> infty
     prop = nu/n; % proportion of agents in each class
     over_n = 0;
 end
 
-switch perf
-    case 'it_err_last_worst'
-        assert(m == 2,"You should provide 2 subsets of agents: [1 (the worst), N-1 (the rest)]")
-    case {'it_err_last_percentile_worst', 'fct_err_last_percentile_worst'}
-        assert(m == 3,"You should provide 3 subsets of agents, i.e. [(1-p)N, 1, p*N-1], where p is the percentile we evaluate")
-    case 'fct_err_last_worst'
-        assert(m == 2,"You should provide 2 subsets of agents: [1 (the worst), N-1 (the rest)]")
+% parameters of the class of functions for each agent equivalence class
+if length(fctParam) < r
+    fctParam = repmat(fctParam,r,1);
 end
 
-if length(fctParam) < m % parameters of the class of functions for each subset
-    fctParam = repmat(fctParam,m,1);
-end
+%% Defining the coefficient vectors to access SDP variables easily
+% Gram matrix G = P^TP with P = [P1 ... Pn]
+% Pi = [x0 g0...gt Wx0...Wxt-1 (geval xeval) gs]_i
+% coefficient x^k is such that Pi x^k = x_i^k
 
-% bounds on eigenvalues
-if length(lam) == 1
-    lamW = [-lam,lam];
-else
-    lamW = lam;
-end
+% Vector of function values F = [F1 .. Fn]
+% Fi = [f0..ft (feval)]_i
+% coefficient f^k is such that Fi f^k = f_i^k
 
-% Defininfg the coefficient to access SDP variables easily
-% Pi = [x0 g0...gK Wx0...WxK-1 (geval xeval) gs]_i 
-% Fi = [f0..fK (feval)]_i  %feval2
-dimG = 2*(K+1)+3;
-dimF = K+2;
-nbPts = K+3;
+
+dimG = 2*(t+1)+3; % dimension of the Gram matrix
+dimF = t+2;  % dimension of the vector of function values
+nbPts = t+3; % number of points to use for the interpolation of the local functions
+
 if verbose
-    fprintf("Problem Size = %d \n", dimG);
+    fprintf("Problem Size = %d x %d \n", dimG,dimG);
 end
 
-% Optimum
+% Optimum coeff
 xs   = zeros(dimG,1); % optimal point
-%xs(end-1) = 1; % We suppose x* = 0
+%xs(end-1) = 1; % no need because we suppose x* = 0
 gs   = zeros(dimG,1); % local gradient at optimum
 gs(end) = 1;
 fs   = zeros(dimF,1); % local function value at optimum
-%fs(end) = 1
+%fs(end) = 1    % no need because we suppose f* = 0
 
-% Iterates init
-x  = zeros(dimG, K+1);  x(1,1)      = 1;
-g  = zeros(dimG, K+1);  g(2:K+2,:)  = eye(K+1);
-f  = zeros(dimF,K+1);   f(1:K+1,:)  = eye(K+1);
+% Initial iterates coeff
+x  = zeros(dimG, t+1);  x(1,1)      = 1;
+g  = zeros(dimG, t+1);  g(2:t+2,:)  = eye(t+1);
+f  = zeros(dimF,t+1);   f(1:t+1,:)  = eye(t+1);
 
-% Point common to all agents, used for Performance Evaluation
-gc  = zeros(dimG,1); gc(2*(K+1)+1)= 1;
-xc  = zeros(dimG,1); xc(2*(K+1)+2)= 1;
-fc  = zeros(dimF,1); fc(K+2)      = 1;
+% coeff for the point common to all agents, used in the performance criterion
+gc  = zeros(dimG,1); gc(2*(t+1)+1)= 1;
+xc  = zeros(dimG,1); xc(2*(t+1)+2)= 1;
+fc  = zeros(dimF,1); fc(t+2)      = 1;
 
-% Consensus iterates
-Wx = zeros(dimG, K); Wx(K+3:2*K+2,:)    = eye(K);
+% Consensus iterates coeff
+Wx = zeros(dimG, t); Wx(t+3:2*t+2,:)    = eye(t);
 
-% EXTRA iterates
-if K>0
-    x(:,2) = Wx(:,1) - alpha*g(:,1);
+% EXTRA iterates coeff
+if t>0
+    x(:,2) = Wx(:,1) - alpha(1)*g(:,1);
 end
-for k = 1:K-1
-    x(:,k+2) = x(:,k+1) + Wx(:,k+1) -1/2*(x(:,k) + Wx(:,k) ) - alpha*(g(:,k+1) - g(:,k));
+for k = 1:t-1
+    x(:,k+2) = x(:,k+1) + Wx(:,k+1) -1/2*(x(:,k) + Wx(:,k) ) - alpha(k)*(g(:,k+1) - g(:,k));
 end
 
-% Interpolation concatenation
+% set of points to interpolate for the local functions
 Xinterp = [xs, x, xc];
 Ginterp = [gs, g, gc];
 Finterp = [fs, f, fc];
 
-Xcons = [x(:,1:K)];
+% set of pair of points to interpolate for the averaging matrix
+Xcons = [x(:,1:t)];
 Wxcons = [Wx];
 
 %% PEP problem
-% We consider m equivalence classes of Nu agents
-Ga = cell(m,1); % diagonal blocks of symmetrized Gram
-Gb = cell(m,1); % off-diagonal blocks of symmetrized Gram (for same agents from the same subset)
-Ge = cell(m*(m-1)/2,1); % off-diagonal blocks of symmetrized Gram (for different subsets agents)
-fa = cell(m,1); % Vector of function values for each block of the symmetrized F vector.
+
+% (1) VARIABLES
+% We consider r equivalence classes of nu agents
+Ga = cell(r,1); % diagonal blocks of symmetrized Gram
+Gb = cell(r,1); % off-diagonal blocks of symmetrized Gram (for same agents from the same subset)
+Ge = cell(r*(r-1)/2,1); % off-diagonal blocks of symmetrized Gram (for different subsets agents)
+fa = cell(r,1); % Vector of function values for each block of the symmetrized F vector.
 
 % Defining the SDP variables
-for u=1:m
+for u=1:r
     Ga{u} = sdpvar(dimG);
-    if (nu(u)>1 && ~Ninf) || (prop(u) > 0 && Ninf) % more than one agent in class u
+    if (nu(u)>1 && ~ninf) || (prop(u) > 0 && ninf) % more than one agent in class u
         Gb{u} = sdpvar(dimG);
     else % only one agent in class u
         Gb{u} = 0;
     end
-    for v=u+1:m
+    for v=u+1:r
         Ge{u+v-2} = sdpvar(dimG,dimG,'full');
     end
     fa{u} = sdpvar(1,dimF);
 end
 
-% SDP consrtraint G>= 0
-for u=1:m
+% (2) SDP constraint G>= 0
+for u=1:r
     if u==1
         cons = (Ga{u}-Gb{u})>=0;
     else
@@ -155,58 +174,47 @@ for u=1:m
 end
 
 H = blkvar;
-for u = 1:m
+for u = 1:r
     H(u,u) = prop(u)*over_n*Ga{u} + prop(u)*(prop(u)-over_n)*Gb{u};
-    for v = u+1:m
+    for v = u+1:r
         H(u,v) = prop(u)*prop(v)*Ge{u+v-2};
-        %H{v,u} = nu(u)*nu(v)*Ge{u+v-2}';
         %H{v,u} filled out automatically by yalmip thanks to symmetry of blkvar
     end
 end
 cons = cons + (H >= 0);
 
-% Definition of variables GA, GC and GD for easy constraint definition
- fA = 0; GA = 0; GC = 0; %GD = 0;
-for u=1:m
+% Definition of variables GA, GC and GD for easy constraints definition
+fA = 0; % 1/n sum_u nu fa{u}
+GA = 0; % 1/n sum_u nu Ga{u}
+GC = 0; % 1/n^2 sum_u nu (Ga{u}+(nu-1)Gb{u}) + 1/n^2 sum_u sum_v nu*nv*Ge{u,v}
+for u=1:r
     fA = fA + prop(u)*fa{u};
     GA = GA + prop(u)*Ga{u};
     GC = GC + prop(u)*(Ga{u}*over_n + (prop(u)-over_n)*Gb{u});
-    for v=u+1:m
+    for v=u+1:r
         GC = GC + prop(u)*prop(v)*(Ge{u+v-2}+Ge{u+v-2}');
     end
 end
 GD = GA - GC;
 
-%cons = cons + (GD >= 0);
-cons = cons + (GC >= 0);
-
-% Optimality Constraint
-cons = cons + (gs.'*(GC)*gs == 0); % WARNING: ill-conditionned?
+% (3) OPTIMALITY Constraint
+cons = cons + (gs.'*(GC)*gs == 0); % WARNING: equality constraints deteriorate the problem conditioning
 
 % Equality of all the optimal point for all the agents
 % (not needed if index of xs is 0)
 if ~all(xs==0)
-    cons = cons + (xs.'*(GD)*xs == 0);
+    cons = cons + (xs.'*(GD)*xs == 0); % WARNING: equality constraints deteriorate the problem conditioning
 end
 
-% Def of common point xc, used in the performance criterion
-switch perf %WARNING: ill-conditionned?
-    case 'fct_err_Kavg_Navg' % xeval is avg_k avg_i x_i^k
-        cons = cons + (xc.'*(GA)*xc + mean((x(:,:) - 2*xc).'*GC*x(:,:),'all') == 0);
-    case 'fct_err_last_Navg' % xeval is avg_i x_i^K
-        cons = cons + (xc.'*(GA)*xc + (x(:,K+1) - 2*xc).'*(GC)*x(:,K+1) == 0);
-    case 'fct_err_last_worst' % xeval is x_1^K
-        cons = cons + (xc.'*Ga{2}*xc + x(:,K+1).'*Ga{1}*x(:,K+1) -  2*xc.'*(Ge{1}')*x(:,K+1) == 0);
-end
-
-% INTERPOLATION OF local functions fi
+% (4) INTERPOLATION conditions for local functions fi
 for i = 1:nbPts
     for j = 1:nbPts
         xi = Xinterp(:,i); gi = Ginterp(:,i); fi = Finterp(:,i);
         xj = Xinterp(:,j); gj = Ginterp(:,j); fj = Finterp(:,j);
         if i ~= j
-            for u=1:m
-                L = fctParam(u).L;  mu = fctParam(u).mu; 
+            for u=1:r
+                L = fctParam(u).L;  mu = fctParam(u).mu;
+                % condition for L-smooth and mu-strongly convex functions
                 cons = cons + ( (fa{u}*(fj-fi) + gj.'*(Ga{u})*(xi-xj) + ...
                     1/(2*(1-mu/L)) *(1/L*((gi-gj).'*(Ga{u})*(gi-gj)+...
                     mu *( (xj - xi).'*(Ga{u})*(xj - xi))  - ...
@@ -216,98 +224,129 @@ for i = 1:nbPts
     end
 end
 
-% INTERPOLATION of averaging matrix - Constraints for consensus Y = WX
-% Average preserving
-cons = cons + ( (Xcons-Wxcons).'*(GC)*(Xcons-Wxcons) == 0); % WARNING: ill-conditionned?
-% Spectral conditions
-if ~time_var_mat
-    cons = cons + ( (Wxcons-lamW(1)*Xcons).'*(GD)*(Wxcons-lamW(2)*Xcons) <= 0); % Wx^2 <= lam^2 x^2 (all consensus steps at once)
-    if K>1
-        cons = cons + (Wxcons.'*(GD)*Xcons - Xcons.'*(GD)*Wxcons == 0); %XY = YX (see beginning of carnet 2023), we can alos use GA because X = Xb + Xp
+% (5) INTERPOLATION conditions for the averaging matrix W, used in consensus steps
+% Average preserving: avg_i Wxi = avg_i Xi = Xb
+cons = cons + ( (Xcons-Wxcons).'*(GC)*(Xcons-Wxcons) == 0); % WARNING: equality constraints deteriorate the problem conditioning
+
+if ~tv_mat % time-constant matrix W
+    % Spectral conditions
+    cons = cons + ( (Wxcons-lamW(1)*Xcons).'*(GD)*(Wxcons-lamW(2)*Xcons) <= 0); % (Wx-Xb)^2 <= lam^2 (X-Xb)^2 (all consensus steps at once)
+    if t>1 % Symmetry condition
+        cons = cons + (Wxcons.'*(GD)*Xcons - Xcons.'*(GD)*Wxcons == 0); %(X-Xb)^T(Wx-Xb) = (Wx-Xb)^T(X-Xb). We can also use GA (instead of GD)
     end
-else
+else % time-varying matrix W^k
     for k = 1:length(Wxcons(1,:))
-        cons = cons + ( (Wxcons(:,k)-lamW(1)*Xcons(:,k)).'*(GD)*(Wxcons(:,k)-lamW(2)*Xcons(:,k)) <= 0); % Wx^2 <= lam^2 x^2 (each consensus step independently)
+        % Spectral conditions
+        cons = cons + ( (Wxcons(:,k)-lamW(1)*Xcons(:,k)).'*(GD)*(Wxcons(:,k)-lamW(2)*Xcons(:,k)) <= 0); % (Wx-xb)^2 <= lam^2 (x-xb)^2 (each consensus step independently)
     end
 end
 
-% INITIAL CONDITION
-if eq_start
-    cons = cons + (x(:,1).'*(GD)*x(:,1) == 0); % same starting point % WARNING: ill-conditionned?
+% (6) INITIAL CONDITIONS
+if eq_start % same starting point
+    cons = cons + (x(:,1).'*(GD)*x(:,1) == 0);  % WARNING: equality constraints deteriorate the problem conditioning
 end
 
-switch init.type
-    case 'diging_like'
-        for u=1:m
-            % ||x_i^k - xs||^2 <= D^2 for all i \in class u
-            cons = cons + ((x(:,1)-xs).'*(Ga{u})*(x(:,1)-xs) <= D^2);   % bound on distance of starting point to optimum for each class (QST: why not for all class?)
+% Initial condition for x0
+switch init.x
+    case {'bounded_navg_it_err','0'}      % avg_i ||xi0 - xs||^2 <= D^2
+        cons = cons + ((x(:,1)-xs).'*(GA)*(x(:,1)-xs) <= init.D^2);
+    case {'uniform_bounded_it_err','1'}   %||xi0 - xs||^2 <= D^2 for all i
+        for u=1:r % for each class u
+            cons = cons + ((x(:,1)-xs).'*(Ga{u})*(x(:,1)-xs) <= init.D^2);
         end
-        cons = cons + (g(:,1).'*(GD)*g(:,1) <= E^2);                    % bound on the distance of the initial gradient to their average: 
-                                                                        % avg_i ||g_i(x_i^0) - avg_j(g_j(x_j^0))||^2 <= E^2
-    case 'diging_like_combined' % summing all the constraints in one
-        cons = cons + (x(:,1).'*(GA)*x(:,1) + init.gamma*(g(:,1).'*(GD)*g(:,1)) <= D^2);
-    case 'uniform_bounded_iterr_local_grad0'
-        for u=1:m
-            % ||x_i^k - xs||^2 <= D^2 for all i \in class u
-            cons = cons + ((x(:,1)-xs).'*(Ga{u})*(x(:,1)-xs) <= D^2);   % bound on distance of starting point to optimum for each class
-            cons = cons + (g(:,1).'*(Ga{u})*g(:,1) <= E^2);             % ||g_i(x_i^0)||^2 >= E^2, for all i \in class u
+    case {'navg_it_err_combined_grad','2'}
+        % (avg_i ||xi0 - xs||^2) + gamma* (avg_i ||s0 - avg_i(gi0)||^2) <= D^2
+        cons = cons + (x(:,1).'*(GA)*x(:,1) + init.gamma*(g(:,1).'*(GD)*g(:,1)) <= init.D^2);
+    otherwise % default (for EXTRA) is 'uniform_bounded_it_err'
+        for u=1:r % for each class u
+            cons = cons + ((x(:,1)-xs).'*(Ga{u})*(x(:,1)-xs) <= init.D^2);
         end
-    case 'bounded_avg_iterr_local_grad0'
-        % avg_i ||x_i^k - xs||^2 <= D^2
-        cons = cons + ((x(:,1)-xs).'*(GA)*(x(:,1)-xs) <= D^2);          % bound on the average distance of starting points to optimum
-        cons = cons + (g(:,1).'*(GA)*g(:,1) <= E^2);                    % avg_i ||g(x_i^0)||^2 >= E^2
-    case 'uniform_bounded_iterr_local_grad*'
-        for u=1:m
-            cons = cons + ((x(:,1)-xs).'*(Ga{u})*(x(:,1)-xs) <= D^2);   % bound on distance of starting point to optimum for each class
-            cons = cons + (gs.'*(Ga{u})*gs <= E^2);                     % ||g_i(x*)||^2 >= E^2, for all i \in class u
-        end
-    case 'bounded_avg_iterr_local_grad*'
-        % avg_i ||x_i^k - xs||^2 <= D^2
-        cons = cons + ((x(:,1)-xs).'*(GA)*(x(:,1)-xs) <= D^2);          % bound on the average distance of starting points to optimum
-        cons = cons + (gs.'*(GA)*gs <= E^2);                            % avg_i ||g_i(x*)||^2 >= E^2,
-    otherwise %'uniform_bounded_iterr_local_grad*'
-        for u=1:m
-            cons = cons + ((x(:,1)-xs).'*(Ga{u})*(x(:,1)-xs) <= D^2);   % bound on distance of starting point to optimum for each class
-            cons = cons + (gs.'*(Ga{u})*gs <= E^2);                     % avg_i ||g_i(x*)||^2 >= E^2,
-        end 
 end
 
-% OBJECTIVE FUNCTION of the PEP
+% Initial condition for g0
+switch init.grad
+    case {'bounded_navg_grad0','0'}       % avg_i ||gi0||^2 <= E^2
+        cons = cons + (g(:,1).'*(GA)*g(:,1) <= init.E^2);
+    case {'uniform_bounded_grad0','1'}    % ||gi0||^2 <= E^2 for all i
+        for u=1:r % for each class u
+            cons = cons + (g(:,1).'*(Ga{u})*g(:,1) <= init.E^2);
+        end
+    case {'bounded_grad0_cons_err','2'}    % avg_i ||gi0 - avg_i(gi0)||^2 <= E^2
+        % bound on the distance of the initial gradient to their average:
+        cons = cons + (g(:,1).'*(GD)*g(:,1) <= init.E^2);
+    case {'bounded_navg_grad*','3'}       % avg_i ||gi(x*)||^2 <= E^2
+        cons = cons + (gs.'*(GA)*gs <= init.E^2);
+    case {'uniform_bounded_grad*','4'}    % ||gi(x*)||^2 <= E^2 for all i
+        for u=1:r % for each class u
+            cons = cons + (gs.'*(Ga{u})*gs <= init.E^2);
+        end
+    otherwise % default (for EXTRA) is 'uniform_bounded_grad*'
+        if ~strcmp(init.x,'navg_it_err_combined_grad') && ~strcmp(init.x,'2')
+            for u=1:r % for each class u
+                cons = cons + (gs.'*(Ga{u})*gs <= init.E^2);
+            end
+        end
+end
+
+% (7) OBJECTIVE FUNCTION of the PEP
+% definition of common point xc, used in the performance criterion
+switch perf % WARNING: equality constraints deteriorate the problem conditioning
+    case {'fct_err_last_navg','6'} % xeval is avg_i x_i^t
+        cons = cons + (xc.'*(GA)*xc + (x(:,t+1) - 2*xc).'*(GC)*x(:,t+1) == 0);
+    case {'fct_err_last_worst','7'} % xeval is x_1^t
+        cons = cons + (xc.'*Ga{2}*xc + x(:,t+1).'*Ga{1}*x(:,t+1) -  2*xc.'*(Ge{1}')*x(:,t+1) == 0);
+    case {'fct_err_tavg_navg','8'} % xeval is avg_k avg_i x_i^k
+        cons = cons + (xc.'*(GA)*xc + mean((x(:,:) - 2*xc).'*GC*x(:,:),'all') == 0);
+end
+% definition of the performance criterion
 switch perf
-    case 'Navg_last_it_err' % 1/N sum_i ||x_i^K - x*||2
-        obj = (x(:,K+1)-xs).'*GA*(x(:,K+1)-xs);
-    case 'Kavg_Navg_it_err' % avg_i avg_k ||x_i^k - x*||2
+    case {'navg_last_it_err','0'} % 1/n sum_i ||x_i^t - x*||2
+        obj = (x(:,t+1)-xs).'*GA*(x(:,t+1)-xs);
+    case {'tavg_navg_it_err','1'} % avg_i avg_k ||x_i^k - x*||2
         obj = 0;
-        for k = 1:K+1
-            obj = obj + (x(:,k)-xs).'*GA*(x(:,k)-xs)/(K+1);
+        for k = 1:t+1
+            obj = obj + (x(:,k)-xs).'*GA*(x(:,k)-xs)/(t+1);
         end
-    case 'it_err_last_Navg' % ||avg_i x_i^K - x*||^2
-        obj = (x(:,K+1)-xs).'*GC*(x(:,K+1)-xs);
-    case 'it_err_Kavg_Navg' % ||avg_i avg_k x_i^k - x*||^2
+    case {'navg_it_err_combined_grad','2'}
+        obj = x(:,t+1).'*(GA)*x(:,t+1) + init.gamma*(g(:,t+1).'*GD*g(:,t+1));
+    case {'it_err_last_navg','3'} % ||avg_i x_i^t - x*||^2
+        obj = (x(:,t+1)-xs).'*GC*(x(:,t+1)-xs);
+    case {'it_err_tavg_navg','4'} % ||avg_i avg_k x_i^k - x*||^2
         obj = (mean(x(:,:),2)-xs).'*GC*(mean(x(:,:),2)-xs);
-    case 'it_err_last_worst' % max_i ||x_i^K - x*||2
-        obj = (x(:,K+1)-xs).'*Ga{1}*(x(:,K+1)-xs);
-    case 'it_err_last_percentile_worst' % max_{i \in sets 2 and 3} ||x_i^K - x*||2
-        obj = (x(:,K+1)-xs).'*Ga{2}*(x(:,K+1)-xs);
-        obj_exclude = (x(:,K+1)-xs).'*Ga{1}*(x(:,K+1)-xs);
-        cons = cons + (obj_exclude >= obj);
-    case 'Navg_last_it_err_combined_with_g' % for rate in DIGing
-        obj = x(:,K+1).'*(GA)*x(:,K+1) + init.gamma*(g(:,K+1).'*GD*g(:,K+1));
-    case { 'fct_err_last_Navg', 'fct_err_Kavg_Navg'}
-        %  F(xb(K)) - F(x*) or F(avg_k xb(k)) - F(x*)
+    case {'it_err_last_worst','5'} % max_i ||x_i^t - x*||2
+        obj = (x(:,t+1)-xs).'*Ga{1}*(x(:,t+1)-xs);
+    case { 'fct_err_last_navg', 'fct_err_tavg_navg','6','8'}
+        %  F(xb(t)) - F(x*) or F(avg_k xb(k)) - F(x*)
         obj = fA*(fc-fs);
-    case 'fct_err_last_worst' %max_i F(xi) - F(x*)
-        obj = fa{1}*(f(:,K+1)-fs)*prop(1);
-        for u = 2:m
+    case {'fct_err_last_worst','7'} %max_i F(xi) - F(x*)
+        obj = fa{1}*(f(:,t+1)-fs)*prop(1);
+        for u = 2:r
             obj = obj + fa{u}*(fc-fs)*prop(u);
         end
-    otherwise % default: Navg_last_it_err
-        obj = (x(:,K+1)-xs).'*GA*(x(:,K+1)-xs);
+    case {'it_err_last_percentile_worst','9'} % max_{i \in sets 2 and 3} ||x_i^t - x*||2
+        obj = (x(:,t+1)-xs).'*Ga{2}*(x(:,t+1)-xs);
+        obj_exclude = (x(:,t+1)-xs).'*Ga{1}*(x(:,t+1)-xs);
+        cons = cons + (obj_exclude >= obj);
+    otherwise % default: 'navg_last_it_err' 
+        obj = (x(:,t+1)-xs).'*GA*(x(:,t+1)-xs); % 1/n sum_i ||x_i^t - x*||2
 end
 
-% RESOLUTION of the SDP PEP
+% (7) Solve the SDP PEP
 solver_opt      = sdpsettings('solver','mosek','verbose',verbose_solv);
 solverDetails   = optimize(cons,-obj,solver_opt);
+
+if verbose
+    fprintf("Solver output %7.5e, \t Solution status %s \n",double(obj), solverDetails.info);
+end
+
+% Trace Heuristic
+if trace_heuristic
+    cons = cons + (obj >= out.WCperformance-1e-5);
+    solverDetails  = optimize(cons,trace(GA),solver_opt);
+    if verbose
+        fprintf("Solver output after Trace Heurisitc: %7.5e, \t Solution status %s \n",double(obj), solverDetails.info);
+    end
+end
 
 % OUTPUT
 out.solverDetails = solverDetails;
@@ -315,80 +354,75 @@ out.WCperformance = double(obj);
 out.GD = double(GD);
 out.GT = double(GC);
 out.GA = double(GA);
+out.Settings = Settings;
 
-if verbose
-    fprintf("Solver output %7.5e, \t Solution status %s \n",out.WCperformance, out.solverDetails.info);
-end
-
-% Trace Heuristic
-if trace_heuristic
-    cons = cons + (obj >= out.WCperformance-1e-5);
-    solverDetails  = optimize(cons,trace(GA),solver_opt);
-    
-    wc = double(obj);
-    if verbose
-        fprintf("Solver output after Trace Heurisitc: %7.5e, \t Solution status %s \n",wc, solverDetails.info);
-    end
-end
-
-
-
-if estim_W
-    % Composition of G
+% Evaluate the worst-case iterates (for a given number of agents)
+if eval_out || estim_W
+    % Composition of the full Gram matrix G
     G = zeros(n*dimG);
     Nc = 0;
-    for u=1:m
+    for u=1:r
         Gu = zeros(nu(u)*dimG);
         for i=0:nu(u)-1
             Gu(i*dimG+1:(i+1)*dimG,i*dimG+1:(i+1)*dimG) = double(Ga{u});
-             for j=i+1:nu(u)-1
-                 %fprintf('i=%d,j=%d \n',i,j)  
-                 Gu(i*dimG+1:(i+1)*dimG,j*dimG+1:(j+1)*dimG) = double(Gb{u});
-                 Gu(j*dimG+1:(j+1)*dimG,i*dimG+1:(i+1)*dimG) = double(Gb{u});
-             end
+            for j=i+1:nu(u)-1
+                %fprintf('i=%d,j=%d \n',i,j)
+                Gu(i*dimG+1:(i+1)*dimG,j*dimG+1:(j+1)*dimG) = double(Gb{u});
+                Gu(j*dimG+1:(j+1)*dimG,i*dimG+1:(i+1)*dimG) = double(Gb{u});
+            end
         end
         G(Nc*dimG+1:(Nc+nu(u))*dimG,Nc*dimG+1:(Nc+nu(u))*dimG) = Gu;
-        for v=u+1:m
+        for v=u+1:r
             Guv = zeros(nu(u)*dimG,nu(v)*dimG);
             for i=0:nu(u)-1
                 for j=0:nu(v)-1
-                    %fprintf('v=%d, i=%d,j=%d \n',v,i,j)  
+                    %fprintf('v=%d, i=%d,j=%d \n',v,i,j)
                     Guv(i*dimG+1:(i+1)*dimG,j*dimG+1:(j+1)*dimG) = double(Ge{u+v-2});
                     %Guv(j*dimG+1:(j+1)*dimG,i*dimG+1:(i+1)*dimG) = Gr{u+v-2}';
                 end
             end
             G(Nc*dimG+1:(Nc+nu(u))*dimG,(Nc+nu(u))*dimG+1:(Nc+nu(u)+nu(v))*dimG) = Guv;
-            G((Nc+nu(u))*dimG+1:(Nc+nu(u)+nu(v))*dimG,Nc*dimG+1:(Nc+nu(u))*dimG) = Guv'; 
+            G((Nc+nu(u))*dimG+1:(Nc+nu(u)+nu(v))*dimG,Nc*dimG+1:(Nc+nu(u))*dimG) = Guv';
         end
         Nc = Nc + nu(u);
     end
-
-    % Factorization of G
+    
+    % Factorization of the Gram matrix G
     [V,D]=eig(double(G));%
     tol=1e-5; %Throw away eigenvalues smaller that tol
     eigenV=diag(D); eigenV(eigenV < tol)=0;
     new_D=diag(eigenV); [~,P]=qr(sqrt(new_D)*V.');
     P=P(1:sum(eigenV>0),:);
     P = double(P);
-    d = length(P(:,1)) % dimension of the worst-case
+    d = length(P(:,1)); % dimension of the worst-case
     
     % Extracting X and Y
     Pi = cell(n,1);
-    X_fl = zeros(n,(K)*d);
-    Y_fl = zeros(n,(K)*d);
+    X_fl = zeros(n,(t)*d);
+    Y_fl = zeros(n,(t)*d);
     Nc = 0;
-    for u=1:m
+    for u=1:r
         for i=1:nu(u)
             Pi{Nc+i} = P(:,Nc*dimG+1:(Nc+1)*dimG);
-            X_fl(Nc+i,:) = reshape(Pi{Nc+i}*Xcons(:,:),[1,(K)*d]);
-            Y_fl(Nc+i,:) = reshape(Pi{Nc+i}*Wxcons(:,:),[1,(K)*d]);
+            X_fl(Nc+i,:) = reshape(Pi{Nc+i}*Xcons(:,:),[1,(t)*d]);
+            Y_fl(Nc+i,:) = reshape(Pi{Nc+i}*Wxcons(:,:),[1,(t)*d]);
         end
         Nc = Nc+nu(u);
     end
     out.X = X_fl;
     out.Y = Y_fl;
-    
-    % Estimating worst-case W
-    [out.Wh,out.r,out.status] = cons_matrix_estimate([-lam,lam],X_fl,Y_fl,n);
+end
+
+% (8) (Try to) Recover the worst-case averaging matrix that links the solutions X and Y
+if estim_W
+    [Wh.W,Wh.r,Wh.status] = cons_matrix_estimate(lamW,X_fl,Y_fl,n);
+    if verbose && strcmp(type,'spectral_relaxed')
+        fprintf("The estimate of the worst-case averaging matrix is ")
+        Wh.W
+        %other info that could be printed : eig(Wh.W); Wh.r; Wh.status;
+    end
+    out.Wh = Wh;
 end
 end
+
+

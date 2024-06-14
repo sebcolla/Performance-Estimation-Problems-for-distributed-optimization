@@ -3,13 +3,14 @@ function out = AccDNGD_SC_agents(Settings)
 % The algorithm has been proposed in [1] and is suited to smooth and strongly-convex functions. 
 % Another version of the algorithm exists for convex functions.
 % INPUT:
-%   Settings: structure with all the settings for the PEP for DGD. 
+%   Settings: structure with all the settings to use in the PEP for Acc-DNGD-SC. 
 %   The structure can include the following fields:
 %   (unspecified fields will be set to a default value)
 %       Settings.n: number of agents (default = 2)
 %       Settings.t: number of iterations (default = 1)
 %       Settings.alpha: step-size (scalar or vector of t elements) (default = 1)
-%       Settings.ATC: boolean to indicate if ATC scheme of the algorithm should be used (1) or not (0)
+%       Settings.ATC: boolean to indicate if ATC scheme of the algorithm
+%       should be used (1) or not (0) (default = 0)
 %       Settings.avg_mat: averaging matrix description (one of the following options)
 %           - (n x n) matrix
 %           - the second-largest eigenvalue modulus (scalar)
@@ -17,19 +18,24 @@ function out = AccDNGD_SC_agents(Settings)
 %           (except one): [lb, ub] with -1 < lb <= ub < 1.
 %           (default = 0.5)
 %       Settings.tv_mat: boolean, 1 if the averaging matrix can vary across the
-%                        iteration and 0 otherwise.
-%       Settings.eq_start: boolean to indicate if the agents start with the same initial iterate
+%                        iteration and 0 otherwise. (default = 0)
+%       Settings.eq_start: boolean to indicate if the agents start with the
+%       same initial iterate (default = 0)
 %       Settings.init: structure with details about the initial conditions
-%                init.x: string to specify the initial condition to
-%                        consider for the local iterates (x)
-%                init.D: real constant to use in the initial condition (cond_x <= D^2)
-%                init.grad: string to choose the initial condition to
-%                           consider for the local gradients
-%                init.E: real constant to use in the initial condition (cond_g <= E^2)
+%                init.x:    string to specify the initial condition to consider for 
+%                           the local iterates (x) (default = 'bounded_navg_it_err')
+%                init.D:    real constant to use in the initial condition (cond_x <= D^2) (default = 1)
+%                init.grad: string to choose the initial condition to consider for 
+%                           the local gradients (default = '')
+%                init.E:    real constant to use in the initial condition (cond_g <= E^2) (default = 1)
 %                init.gamma: real coefficient to use in combined conditions (cond_x + gamma*cond_g <= D^2)
+%                           (default = 1)
 %       Settings.perf: string to specify the performance criterion to consider in PEP
+%                      (default = 'fct_err_last_navg')
 %       Settings.fctClass: string to specify the class of functions
+%                          (default = 'SmoothStronglyConvex')
 %       Settings.fctParam: structure with the parameter values of the function class
+%
 % OUTPUT: structure with details about the worst-case solution of the PEP
 %   solverDetails: structure with solver details
 %   WCperformance: worst-case performance value
@@ -52,11 +58,15 @@ estim_W = 0;            % estimate the worst-case averaging matrix
 
 %%% Set up performance estimation settings %%%
 if nargin == 1
-    [n,t,alpha,ATC,type,mat,tv_mat,eq_start,init,perf,fctClass,fctParam,Settings] = extractSettings(Settings);
+    Settings = extractSettings(Settings);
 else
     warning("settings should be provided in a single structure - default settings used")
-    [n,t,alpha,ATC,type,mat,tv_mat,eq_start,init,perf,fctClass,fctParam,Settings] = extractSettings(struct());
+    Settings = extractSettings(struct());
 end
+n=Settings.n; t=Settings.t; alpha=Settings.alpha; ATC = Settings.ATC;
+type=Settings.type; mat=Settings.avg_mat; tv_mat=Settings.tv_mat; 
+eq_start=Settings.eq_start; init=Settings.init; perf=Settings.perf; 
+fctClass=Settings.fctClass; fctParam=Settings.fctParam;
 
 if verbose
     fprintf("Settings provided for the PEP:\n");
@@ -118,7 +128,7 @@ switch init.grad
     case {'uniform_bounded_grad*','4'}    % ||gi(x*)||^2 <= E^2 for all i
         [Gis,~] = LocalOracles(Fi,repmat({xs},n,1));
         P.AddMultiConstraints(@(gi) gi^2 <= init.E^2, Gis);
-    otherwise % default (for DIGing) is 'bounded_grad0_cons_err'
+    otherwise % default is 'bounded_grad0_cons_err'
         if ~strcmp(init.x,'navg_it_err_combined_grad') && ~strcmp(init.x,'2')
             P.AddConstraint(1/n*sumcell(foreach(@(gi) (gi - 1/n*sumcell(G_saved(:,1)))^2,G_saved(:,1))) <= init.E^2);
         end
@@ -191,10 +201,10 @@ P.TraceHeuristic(trace_heuristic);
 if verbose
     switch type
         case 'spectral_relaxed'
-            fprintf("Spectral PEP formulation for DIGing after %d iterations, with %d agents \n",t,n);
+            fprintf("Spectral PEP formulation for Acc-DNGD-SC after %d iterations, with %d agents \n",t,n);
             fprintf("Using the following spectral range for the averaging matrix: [%1.2f, %1.2f] \n",mat)
         case 'exact'
-            fprintf("Exact PEP formulation for DIGing after %d iterations, with %d agents \n",t,n);
+            fprintf("Exact PEP formulation for Acc-DNGD-SC after %d iterations, with %d agents \n",t,n);
             fprintf("The used averaging matrix is\n")
             disp(mat);
     end
