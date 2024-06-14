@@ -1,212 +1,220 @@
-function out = EXTRA_agents(N,K,alpha,lam,time_var_mat,eq_start,init,perf,fctParam)
-% Compute the worst-case performance of K steps of EXTRA for L-smooth and
-% mu-strongly convex local functions, using an agent-dependent PEP formulation [1].
-% The size of the resulting SDP PEP depends on the total number of iterations K
-% and on the number of agents N in the problem.
-% REQUIREMENTS: PESTO and YALMIP toolboxes with Mosek solver.
+function out = EXTRA_agents(Settings)
+% Compute the worst-case performance of DIGing under the 'Settings' provided.
+% The algorithm has been proposed in [1].
 % INPUT:
-%   N : number of agents
-%   K : number of iterations
-%   alpha : step-size (constant or vector of K elements)
-%   lam: matrix description (suported options)
-%           The full matrix (N x N)
-%           eigenvalue bound ( on the eigenvalues of the consensus matrix used in DGD
-%   time_var_mat : boolean; 1 if the consensus matrix can vary across the
-%   iteration and 0 otherwise.
-%   eq_start : boolean to indicate if the agents start with the same initial iterate
-%   init : string to choose the initial condition to consider
-%   perf : string to choose the performance criterion to consider
-%   fctParam : struct with values for 'L' and 'mu'for each equivalence class of agents
-%               default values : L=1, mu=0.1;
-% OUTPUT: structure with details about the worst-case solution of the PEP, including
-%   WCperformance : worst-case value.
-%   solverDetails : details given by the Mosek solver
-%   
-% Source: 
-%   [1] S. Colla and J. M. Hendrickx, "Exploiting Agent Symmetries for Performance Analysis of Distributed
-%       Optimization Methods", 2024.
+%   Settings: structure with all the settings for the PEP for DGD. 
+%   The structure can include the following fields:
+%   (unspecified fields will be set to a default value)
+%       Settings.n: number of agents (default = 2)
+%       Settings.t: number of iterations (default = 1)
+%       Settings.alpha: step-size (scalar or vector of t elements) (default = 1)
+%       Settings.ATC: boolean to indicate if ATC scheme of the algorithm should be used (1) or not (0)
+%       Settings.avg_mat: averaging matrix description (one of the following options)
+%           - (n x n) matrix
+%           - the second-largest eigenvalue modulus (scalar)
+%           - range of eigenvalues for the averaging matrix
+%           (except one): [lb, ub] with -1 < lb <= ub < 1.
+%           (default = 0.5)
+%       Settings.tv_mat: boolean, 1 if the averaging matrix can vary across the
+%                        iteration and 0 otherwise.
+%       Settings.eq_start: boolean to indicate if the agents start with the same initial iterate
+%       Settings.init: structure with details about the initial conditions
+%                init.x: string to specify the initial condition to
+%                        consider for the local iterates (x)
+%                init.D: real constant to use in the initial condition (cond_x <= D^2)
+%                init.grad: string to choose the initial condition to
+%                           consider for the local gradients
+%                init.E: real constant to use in the initial condition (cond_g <= E^2)
+%                init.gamma: real coefficient to use in combined conditions (cond_x + gamma*cond_g <= D^2)
+%       Settings.perf: string to specify the performance criterion to consider in PEP
+%       Settings.fctClass: string to specify the class of functions
+%       Settings.fctParam: structure with the parameter values of the function class
+% OUTPUT: structure with details about the worst-case solution of the PEP
+%   solverDetails: structure with solver details
+%   WCperformance: worst-case performance value
+%   G:  Gram matrix solution of the PEP
+%   dualvalues_LMIs: dual values of the LMI PEP constraints
+%   dualnames_LMIs:  coresponding names of the LMI contraints
+%   dualvalues:      dual values of the scalar constraints
+%   dualnames:       coresponding names of the contraints
+%   Settings:        structure with all the settings used in the PEP
+%                   (including all the default values that have been set)
+%
+% References
+%   [1] Wei Shi, Qing Ling, Gang Wu, and Wotao Yin. Extra: An exact first-order 
+%   algorithm for decentralized consensus optimization. SIAM Journal on Optimization, 2014
 
-verbose = 0;         % Print the problem set up and the results
-trace_Heuristic = 0; % heuristic to minimize the dimension of the worst-case
-estimateW = 1;       % Estimate the worst averaging matrix
+verbose = 0;            % print the problem set up and the results
+trace_heuristic = 0;    % heuristic to minimize the dimension of the worst-case (1 to activate)
+eval_out = 0;           % evaluate the worst-case local iterates and gradients and add them to the output
+estim_W = 0;            % estimate the worst-case averaging matrix
 
-%%% Set up general problem parameters %%%
-if all(size(lam) ~= 1)
-% (a) Exact formulation (fixed network W)
-    type = 'exact';
-    mat = lam;
-elseif length(lam)==1
-% (b) Spectral formulation
-    type = 'spectral_relaxed';  % type of representation for the communication matrix
-    mat = [-lam,lam];           % Range of eigenvalues for the symmetric (generalized) doubly stochastic communication matrix W
-else % lam contains 2 differents bounds
-    type = 'spectral_relaxed';  % type of representation for the communication matrix
-    mat = lam;                  % Range of eigenvalues for the symmetric (generalized) doubly stochastic communication matrix W
+%%% Set up performance estimation settings %%%
+if nargin == 1
+    [n,t,alpha,ATC,type,mat,tv_mat,eq_start,init,perf,fctClass,fctParam,Settings] = extractSettings(Settings);
+else
+    warning("settings should be provided in a single structure - default settings used")
+    [n,t,alpha,ATC,type,mat,tv_mat,eq_start,init,perf,fctClass,fctParam,Settings] = extractSettings(struct());
 end
 
-% Constants for initial conditions
-D = 1;                      % Constant for the initial condition: ||x0 - xs||^2 <= D^2
-E = 1;                      % Constant for initial condition on s_0
+if verbose
+    fprintf("Settings provided for the PEP:\n");
+    fprintf("n=%d, t=%d, alpha=%1.2f, ATC =%d, type=%s, tv_mat=%d, eq_start=%d,\ninit_x=%s, init_grad=%s, perf=%s, fctClass=%s,\n",n,t,alpha(1),ATC,type,tv_mat,eq_start,init.x,init.grad,perf,fctClass);
+    fprintf('avg_mat = ['); fprintf('%g ', mat); fprintf(']\n');
+    fprintf("------------------------------------------------------------------------------------------\n");
+end
 
 % (0) Initialize an empty PEP
-P = pep();   
+P = pep();
 
 % (1) Set up the local and global objective functions
-fctClass = 'SmoothStronglyConvex'; % Class of functions to consider for the worst-case
-if nargin < 9
-    fctParam.L  = 1;
-    fctParam.mu = 0.1;
-end
-returnOpt = 0;                      % do you need the optimal point of each local function ?
-[Fi,Fav,~,~] = P.DeclareMultiFunctions(fctClass,fctParam,N,returnOpt);
-[xs,Fs] = Fav.OptimalPoint(); 
-%P.AddConstraint(xs^2 == 0); %P.AddConstraint(Fs == 0);
+returnOpt = 0; % or 1 if you need the optimal point of each local function
+[Fi,Fav,~,~] = P.DeclareMultiFunctions(fctClass,fctParam,n,returnOpt);
+[xs,Fs] = Fav.OptimalPoint();
 
 % Iterates cells
-X = cell(N, K+1); Wx = cell(N, K);   % local iterates
-F_saved = cell(N,K);
-G_saved = cell(N,K);
+X = cell(n, t+1);       % local iterates
+F_saved = cell(n,t+1);
+G_saved = cell(n,t+1);
 
 % (2) Set up the starting points and initial conditions
-X(:,1) = P.MultiStartingPoints(N,eq_start);
+X(:,1) = P.MultiStartingPoints(n,eq_start);
 [G_saved(:,1),F_saved(:,1)] = LocalOracles(Fi,X(:,1));
 
-switch init.type
-    case 'diging_like'
-        P.AddConstraint(1/N*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= D^2);   % avg_i ||xi0 - xs||^2 <= D^2
-        P.AddConstraint(1/N*sumcell(foreach(@(gi) (gi - 1/N*sumcell(G_saved(:,1)))^2,G_saved(:,1))) <= E^2); % avg_i ||gi0 - avg_i(gi0)||^2 <= E^2
-    case 'diging_like_combined'
-        metric = 1/N*sumcell(foreach(@(x0, g0)(x0-xs)^2 + init.gamma*(g0 - 1/N*sumcell(G_saved(:,1)))^2,X(:,1), G_saved(:,1)));
-        P.AddConstraint(metric <= D^2);
-    case 'uniform_bounded_iterr_local_grad0'
-        P.AddMultiConstraints(@(xi) (xi-xs)^2 <= D^2, X(:,1));                  % ||xi0 - xs||^2 <= D^2 for all i
-        P.AddMultiConstraints(@(gi) gi^2 <= E^2, G_saved(:,1));                 % ||gi0||^2 <= E^2 for all i
-    case 'bounded_avg_iterr_local_grad0'
-        P.AddConstraint(1/N*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= D^2);   % avg_i ||xi0 - xs||^2 <= D^2
-        P.AddConstraint(1/N*sumcell(foreach(@(gi) gi^2, G_saved(:,1))) <= E^2); % avg_i ||gi0||^2 <= E^2
-    case 'uniform_bounded_iterr_local_grad*'
-        P.AddMultiConstraints(@(xi) (xi-xs)^2 <= D^2, X(:,1));                  % ||xi0 - xs||^2 <= D^2 for all i
-        [Gis,~] = LocalOracles(Fi,repmat({xs},N,1));
-        P.AddMultiConstraints(@(gi) gi^2 <= E^2, Gis);                          % ||gi(x*)||^2 <= E^2 for all i
-    case 'bounded_avg_iterr_local_grad*'
-        P.AddConstraint(1/N*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= D^2);   % avg_i ||xi0 - xs||^2 <= D^2
-        [Gis,~] = LocalOracles(Fi,repmat({xs},N,1));
-        P.AddConstraint(1/N*sumcell(foreach(@(gi) gi^2, Gis)) <= E^2);          % avg_i ||gi(x*)||^2 <= E^2
-    otherwise %'uniform_bounded_iterr_local_grad*'
-        P.AddConstraint(1/N*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= D^2);   % avg_i ||xi0 - xs||^2 <= D^2
-        [Gis,~] = LocalOracles(Fi,repmat({xs},N,1));
-        P.AddMultiConstraints(@(gi) gi^2 <= E^2, Gis);                          % ||gi(x*)||^2 <= E^2 for all i
-end
-                
-% (3) Set up the communication matrix
-W = P.DeclareConsensusMatrix(type,mat,time_var_mat);
-
-% (4) Algorithm (DGD)
-% Step-size 
-if length(alpha) == 1 % use the same step-size for each iteration
-    alpha = alpha*ones(1,K);
+% Initial condition for x0
+switch init.x
+    case {'bounded_navg_it_err','0'}      % avg_i ||xi0 - xs||^2 <= D^2
+        P.AddConstraint(1/n*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= init.D^2);
+    case {'uniform_bounded_it_err','1'}   %||xi0 - xs||^2 <= D^2 for all i
+        P.AddMultiConstraints(@(xi) (xi-xs)^2 <= init.D^2, X(:,1));
+    case {'navg_it_err_combined_grad','2'} 
+        metric = 1/n*sumcell(foreach(@(x0, g0)(x0-xs)^2 + init.gamma*(g0 - 1/n*sumcell(G_saved(:,1)))^2,X(:,1), G_saved(:,1)));
+        P.AddConstraint(metric <= init.D^2); % (avg_i ||xi0 - xs||^2) + gamma* (avg_i ||s0 - avg_i(gi0)||^2) <= D^2
+    otherwise % default is bounded_navg_it_err
+        P.AddConstraint(1/n*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= init.D^2);
 end
 
+% Initial condition for g0
+switch init.grad
+    case {'bounded_navg_grad0','0'}       % avg_i ||gi0||^2 <= E^2
+        P.AddConstraint(1/n*sumcell(foreach(@(gi) gi^2, G_saved(:,1))) <= init.E^2);
+    case {'uniform_bounded_grad0','1'}    % ||gi0||^2 <= E^2 for all i
+        P.AddMultiConstraints(@(gi) gi^2 <= init.E^2, G_saved(:,1));
+    case {'bounded_grad0_cons_err','2'}    % avg_i ||gi0 - avg_i(gi0)||^2 <= E^2
+        P.AddConstraint(1/n*sumcell(foreach(@(gi) (gi - 1/n*sumcell(G_saved(:,1)))^2,G_saved(:,1))) <= init.E^2);
+    case {'bounded_navg_grad*','3'}       % avg_i ||gi(x*)||^2 <= E^2
+        [Gis,~] = LocalOracles(Fi,repmat({xs},n,1));
+        P.AddConstraint(1/n*sumcell(foreach(@(gi) gi^2, Gis)) <= init.E^2);
+    case {'uniform_bounded_grad*','4'}    % ||gi(x*)||^2 <= E^2 for all i
+        [Gis,~] = LocalOracles(Fi,repmat({xs},n,1));
+        P.AddMultiConstraints(@(gi) gi^2 <= init.E^2, Gis);
+    otherwise % default (for DIGing) is 'bounded_grad0_cons_err'
+        if ~strcmp(init.x,'navg_it_err_combined_s') && ~strcmp(init.x,'2')
+            P.AddConstraint(1/n*sumcell(foreach(@(gi) (gi - 1/n*sumcell(G_saved(:,1)))^2,G_saved(:,1))) <= init.E^2);
+        end
+end
+
+% (3) Set up the averaging matrix
+W = P.DeclareConsensusMatrix(type,mat,tv_mat);
+
+% (4) Algorithm (EXTRA)
 % Iterations
-if K > 0
+if t > 0
     Wx(:,1) = W.consensus(X(:,1));
-    X(:,2) = foreach(@(Wx,G)Wx-alpha(1)*G,Wx(:,1),G_saved(:,1));
+    X(:,2) = foreach(@(Wx,G) Wx-alpha(1)*G, Wx(:,1), G_saved(:,1));
+    [G_saved(:,2),F_saved(:,2)] = LocalOracles(Fi,X(:,2));
 end
-for k = 1:K-1
-    Wx(:,k+1) = W.consensus(X(:,k+1));
+for k = 2:t
+    Wx(:,k) = W.consensus(X(:,k));
+    X(:,k+1) = foreach(@(x,Wx,x1,Wx1,G,G1) x + Wx - 1/2*(x1+Wx1) - alpha(k)*(G-G1), X(:,k), Wx(:,k), X(:,k-1), Wx(:,k-1), G_saved(:,k), G_saved(:,k-1));
     [G_saved(:,k+1),F_saved(:,k+1)] = LocalOracles(Fi,X(:,k+1));
-    X(:,k+2) = foreach(@(x1, Wx1, x, Wx, G1,G) x1 + Wx1 - 1/2*(x+Wx) - alpha(k+1)*(G1-G), X(:,k+1), Wx(:,k+1), X(:,k), Wx(:,k),G_saved(:,k+1), G_saved(:,k));
 end
+
 
 % (5) Set up the performance measure
 switch perf
-    case 'Navg_last_it_err' % 1/N sum_i ||x_i^K - x*||2
-        metric = 1/N*sumcell(foreach(@(xiK)(xiK-xs)^2,X(:,K+1)));
-    case 'Kavg_Navg_it_err' % avg_i avg_k ||x_i^k - x*||2
-        metric = 1/((K+1)*N)*sumcell(foreach(@(xiK)(xiK-xs)^2,X(:,:)));
-    case 'it_err_last_Navg' % ||avg_i x_i^K - x*||^2
-        xperf = sumcell(X(:,K+1))/(N);
+    case {'navg_last_it_err','0'} % 1/n sum_i ||x_i^t - x*||2
+        metric = 1/n*sumcell(foreach(@(xit)(xit-xs)^2,X(:,t+1)));
+    case {'tavg_navg_it_err','1'} % avg_i avg_k ||x_i^k - x*||2
+        metric = 1/((t+1)*n)*sumcell(foreach(@(xit)(xit-xs)^2,X(:,:)));
+    case {'navg_it_err_combined_grad','2'}
+        metric = 1/n*sumcell(foreach(@(xi,gi)(xi-xs)^2 + init.gamma*(gi - 1/n*sumcell(G_saved(:,t+1)))^2, X(:,t+1), G_saved(:,t+1)));
+    case {'it_err_last_navg','3'} % ||avg_i x_i^t - x*||^2
+        xperf = sumcell(X(:,t+1))/(n);
         metric = (xperf-xs)^2;
-    case 'it_err_Kavg_Navg' % ||avg_i avg_k x_i^k - x*||^2
-        xperf = sumcell(X)/((K+1)*N);
+    case {'it_err_tavg_navg','4'} % ||avg_i avg_k x_i^k - x*||^2
+        xperf = sumcell(X)/((t+1)*n);
         metric = (xperf-xs)^2;
-    case 'it_err_last_worst' % max_i ||x_i^K - x*||2
-        metric = (X{1,K+1}-xs)^2;
-    case 'it_err_last_percentile_worst' % max_{i \in sets 2 and 3} ||x_i^K - x*||2
-        wa = round((1-init.percentile)*N)+1;
-        metric = (X{wa,K+1}-xs)^2;
-        %obj_exclude = 1/(wa-1)*sumcell(foreach(@(xiK)(xiK-xs)^2,X(1:wa-1,K+1)));
-        P.AddMultiConstraints(@(xiK)(xiK-xs)^2 >= metric,X(1:wa-1,K+1));
-    case 'Navg_last_it_err_combined_with_g' % for rate in DIGing
-        [Glast,~] = LocalOracles(Fi,X(:,K+1));
-        metric = 1/N*sumcell(foreach(@(xi,gi)(xi-xs)^2 + init.gamma*(gi - 1/N*sumcell(Glast))^2, X(:,K+1), Glast));
-    case 'fct_err_last_Navg' % last iterate agent average function error: F(xb(K)) - F(x*)
-        xperf = sumcell(X(:,K+1))/(N);
+    case {'it_err_last_worst','5'} % max_i ||x_i^t - x*||2
+        metric = (X{1,t+1}-xs)^2;
+    case {'fct_err_last_navg','6'} % last iterate agent average function error: F(xb(t)) - F(x*)
+        xperf = sumcell(X(:,t+1))/(n);
         metric = Fav.value(xperf)-Fs;
-    case 'fct_err_last_worst' % worst agent function error: max_i F(xi) - F(x*)
-        xperf = X{1,K+1};
+    case {'fct_err_last_worst','7'} % worst agent function error: max_i F(xi) - F(x*)
+        xperf = X{1,t+1};
         metric = Fav.value(xperf)-Fs;
-    case 'fct_err_Kavg_Navg' % average iterate of agent average function error: F(avg_k xb(k)) - F(x*)
-        xperf = sumcell(X)/((K+1)*N);
+    case {'fct_err_tavg_navg','8'} % average iterate of agent average function error: F(avg_k xb(k)) - F(x*)
+        xperf = sumcell(X)/((t+1)*n);
         metric = Fav.value(xperf)-Fs;
-    otherwise % default: last_Navg_fct_err
-        fprintf("default performance criterion applied: last_Navg_fct_err")
-        xperf = sumcell(X(:,K+1))/(N);
-        metric = Fav.value(xperf)-Fs;
+    otherwise % default: 'navg_last_it_err'
+        metric = 1/n*sumcell(foreach(@(xit)(xit-xs)^2,X(:,t+1)));
 end
 
 P.PerformanceMetric(metric);
 
 % Activate the trace heuristic for trying to reduce the solution dimension
-if trace_Heuristic
-    P.TraceHeuristic(1);
-end
+P.TraceHeuristic(trace_heuristic);
 
 % (6) Solve the PEP
 if verbose
     switch type
         case 'spectral_relaxed'
-            fprintf("Spectral PEP formulation for DGD after %d iterations, with %d agents \n",K,N);
-            fprintf("Using the following spectral range for the communication matrix: [%1.2f, %1.2f] \n",mat)
+            fprintf("Spectral PEP formulation for EXTRA after %d iterations, with %d agents \n",t,n);
+            fprintf("Using the following spectral range for the averaging matrix: [%1.2f, %1.2f] \n",mat)
         case 'exact'
-            fprintf("Exact PEP formulation for DGD after %d iterations, with %d agents \n",K,N);
-            fprintf("The used communication matrix is\n")
+            fprintf("Exact PEP formulation for EXTRA after %d iterations, with %d agents \n",t,n);
+            fprintf("The used averaging matrix is\n")
             disp(mat);
     end
 end
 out = P.solve(verbose+1);
-if verbose, out, end
+out.Settings = Settings;
 
 % (7) Evaluate the output
-d = length(double(X{1,1}));
-
-% Evaluating the X and Y solution of PEP.
-Xv = zeros(N,K,d); Yv = zeros(N,K, d); grad = zeros(N,K+1,d);
-for k = 1:K+1
-    for i = 1:N
-        if k < K+1
-        Yv(i,k,:) = double(Wx{i,k});
-        grad(i,k,:) = double(G_saved{i,k});
+if eval_out
+    d = length(double(X{1,1}));
+    % Evaluating the X and Y solution of PEP.
+    Xv = zeros(n,t,d); grad = zeros(n,t+1,d);
+    for k = 1:t+1
+        for i = 1:n
+            Xv(i,k,:) = double(X{i,k});
+            grad(i,k,:) = double(G_saved{i,k});
         end
-        Xv(i,k,:) = double(X{i,k});
     end
+    out.X = Xv;
+    out.g = grad;
+    out.xs = double(xs);
 end
-out.X = Xv;
-out.Y = Yv;
-out.g = grad;
-out.xs = double(xs);
 
-% (8) Construct an approximation of the worst communication matrix that links the solutions X and Y
-if estimateW
+% (8) (Try to) Recover the worst-case averaging matrix that links the solutions X and Y
+if estim_W
     [Wh.W,Wh.r,Wh.status] = W.estimate(0);
     if verbose && strcmp(type,'spectral_relaxed')
-        fprintf("The estimate of the worst matrix is ")
+        fprintf("The estimate of the worst-case averaging matrix is ")
         Wh.W
-        eig(Wh.W);
-        Wh.r;
-        Wh.status;
+        %other info that could be printed : eig(Wh.W); Wh.r; Wh.status;
     end
     out.Wh = Wh;
 end
 
+if verbose
+    out
+    fprintf("--------------------------------------------------------------------------------------------\n");
+    switch type
+        case 'spectral_relaxed'
+            fprintf("Performance guarantee obtained with PESTO: %1.2f  (valid for any symmetric doubly stochastic matrix such that |lam_2|<=%1.1f)\n",out.WCperformance, max(abs(mat)));
+        case 'exact'
+            fprintf("Performance guarantee obtained with PESTO: %1.2f  (only valid for the specific matrix W)\n",out.WCperformance);
+    end
+end
 end

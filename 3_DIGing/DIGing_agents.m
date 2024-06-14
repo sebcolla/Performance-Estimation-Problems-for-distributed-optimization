@@ -45,7 +45,7 @@ function out = DIGing_agents(Settings)
 %   for distributed optimization over time-varying graphs,” SIAM Journal on
 %   Optimization, 2016.
 
-verbose = 1;            % print the problem set up and the results
+verbose = 0;            % print the problem set up and the results
 trace_heuristic = 0;    % heuristic to minimize the dimension of the worst-case (1 to activate)
 eval_out = 0;           % evaluate the worst-case local iterates and gradients and add them to the output
 estim_W = 0;            % estimate the worst-case averaging matrix
@@ -147,7 +147,7 @@ switch perf
         metric = 1/n*sumcell(foreach(@(xit)(xit-xs)^2,X(:,t+1)));
     case {'tavg_navg_it_err','1'} % avg_i avg_k ||x_i^k - x*||2
         metric = 1/((t+1)*n)*sumcell(foreach(@(xit)(xit-xs)^2,X(:,:)));
-    case {'navg_it_err_combined_grad','2'}
+    case {'navg_it_err_combined_s','2'}
         metric = 1/n*sumcell(foreach(@(xi,si)(xi-xs)^2 + init.gamma*(si - 1/n*sumcell(G_saved(:,t+1)))^2, X(:,t+1), S(:,t+1)));
     case {'it_err_last_navg','3'} % ||avg_i x_i^t - x*||^2
         xperf = sumcell(X(:,t+1))/(n);
@@ -191,7 +191,7 @@ out = P.solve(verbose+1);
 out.Settings = Settings;
 
 % (7) Evaluate the output
-if eval_out || estim_W
+if eval_out
     d = length(double(X{1,1}));
     % Evaluating the X and Y solution of PEP.
     Xv = zeros(n,t,d); grad = zeros(n,t+1,d);
