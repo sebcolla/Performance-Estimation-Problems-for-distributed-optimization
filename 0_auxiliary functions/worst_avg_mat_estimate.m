@@ -11,8 +11,6 @@ function [Wh,r,status] = worst_avg_mat_estimate(lam,X,Y,n)
 %   Wh : estimate of the consensus matrix
 %   r : residual procuded by Wh: r = ||Wh*X - Y||_1/n;
 %   status: indicates which estimate has been returned (pseudo-inverse estimate or SDP estimate).
-            Y
-            X
             Wh = Y*pinv(X); % pseudo-inverse estimate
             status = "pseudo-inverse estimate";
             % check if Wh is feasible (with tolerance tol)
