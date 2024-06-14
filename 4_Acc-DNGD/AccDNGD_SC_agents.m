@@ -26,7 +26,7 @@ function out = AccDNGD_SC_agents(Settings)
 %                           the local iterates (x) (default = 'bounded_navg_it_err')
 %                init.D:    real constant to use in the initial condition (cond_x <= D^2) (default = 1)
 %                init.grad: string to choose the initial condition to consider for 
-%                           the local gradients (default = '')
+%                           the local gradients (default = 'bounded_grad0_cons_err')
 %                init.E:    real constant to use in the initial condition (cond_g <= E^2) (default = 1)
 %                init.gamma: real coefficient to use in combined conditions (cond_x + gamma*cond_g <= D^2)
 %                           (default = 1)
@@ -46,6 +46,9 @@ function out = AccDNGD_SC_agents(Settings)
 %   dualnames:       coresponding names of the contraints
 %   Settings:        structure with all the settings used in the PEP
 %                   (including all the default values that have been set)
+%   Possible additional fields:
+%       iterates (X) and gradients (g) if 'eval_out = 1' in the code
+%       the worst-case averaging matrix (Wh) if 'estim_W = 1' in the code 
 %
 % References:
 %[1] G. Qu and N. Li, “Accelerated distributed nesterov gradient descent”,

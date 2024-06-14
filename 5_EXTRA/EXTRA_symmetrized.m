@@ -1,39 +1,63 @@
-function out = EXTRA_symmetrized(Settings) %Nlist,K,alpha,lam,time_var_mat,eq_start,init,perf,fctParam,Ninf)
-% Compute the worst-case performance of K steps of EXTRA for L-smooth and
+function out = EXTRA_symmetrized(Settings)
+% Compute the worst-case performance of t steps of EXTRA [1] for L-smooth and
 % mu-strongly convex local functions, using a compact symmetrized PEP
-% formulation from [1]. The size of the resulting SDP PEP depends on
-% on the total number of iterations K and the number of equivalence classes of agents
-% (given by the lenght of Nlist), but not on the total number of agents in the problem.
+% formulation from [2]. The size of the resulting SDP PEP depends on
+% on the total number of iterations t and the number of equivalence classes of agents
+% (given by the length of Settings.nlist), but not on the total number of agents in the problem.
 % REQUIREMENTS: YALMIP toolbox with Mosek solver.
-% INPUTS:
-%   Nlist : list of length m=number of equivalence classes of agents.
-%   The elements in the list give the number of agents in each class and sum to N.
-%   K : number of iterations
-%   alpha : step-size (constant or vector of K elements)
-%   lam: matrix description (suported options)
-%           The full matrix (N x N)
-%           eigenvalue bound ( on the eigenvalues of the consensus matrix used in DGD
-%   time_var_mat : boolean; 1 if the consensus matrix can vary across the iteration and 0 otherwise.
-%   eq_start : boolean to indicate if the agents start with the same initial iterate
-%   init : string to choose the initial condition to consider
-%   perf : string to choose the performance criterion to consider
-%   fctParam : struct with values for 'L' and 'mu'for each equivalence class of agents
-%   Ninf :  if 1, compute the solution for N->infty.
-%           In that case Nlist provides size proportions of each classes.
-% OUTPUT: structure with details about the worst-case solution
-% of the PEP, including
+% INPUT:
+%   Settings: structure with all the settings to use in the PEP for EXTRA. 
+%   The structure can include the following fields:
+%   (unspecified fields will be set to a default value)
+%       Settings.nlist: vector of size 'r' with the number of agents in each
+%       equivalence class. (default = [2])
+%       Settings.ninf: boolean to indicate if the number of agents tends to infinity. 
+%                      If ninf=1, then nlist contains size proportions of the equivalence class. (default = 0)
+%       Settings.t: number of iterations (default = 1)
+%       Settings.alpha: step-size (scalar or vector of t elements) (default = 1)
+%       Settings.avg_mat: averaging matrix spectral description (one of the following options)
+%           - the second-largest eigenvalue modulus (scalar)
+%           - range of eigenvalues for the averaging matrix (except one): [lb, ub] with -1 < lb <= ub < 1.
+%           (default = 0.5)
+%       Settings.tv_mat: boolean, 1 if the averaging matrix can vary across the
+%                        iteration and 0 otherwise. (default = 0)
+%       Settings.eq_start: boolean to indicate if the agents start with the
+%       same initial iterate (default = 0)
+%       Settings.init: structure with details about the initial conditions
+%                init.x:    string to specify the initial condition to consider for 
+%                           the local iterates (x) (default = 'uniform_bounded_navg_it_err')
+%                init.D:    real constant to use in the initial condition (cond_x <= D^2) (default = 1)
+%                init.grad: string to choose the initial condition to consider for 
+%                           the local gradients (default = '')
+%                init.E:    real constant to use in the initial condition (cond_g <= E^2) (default = 1)
+%                init.gamma: real coefficient to use in combined conditions (cond_x + gamma*cond_g <= D^2)
+%                           (default = 1)
+%       Settings.perf: string to specify the performance criterion to consider in PEP
+%                      (default = 'fct_err_last_navg')
+%       Settings.fctClass: string to specify the class of functions (default = 'SmoothStronglyConvex')
+%       Settings.fctParam: structure with the parameter values of the function class
+%
+% OUTPUT: structure with details about the worst-case solution of the PEP, including
 %   WCperformance : worst-case value.
 %   solverDetails : details given by the Mosek solver
-
-% Source:
-%   [1] S. Colla and J. M. Hendrickx, "Exploiting Agent Symmetries for Performance Analysis of Distributed
+%   Settings:       structure with all the settings used in the PEP
+%                   (including all the default values that have been set)
+%   Possible additional fields:
+%       Full Gram matrix (G) of the PEP solution if 'eval_out = 1' in the code
+%       associated iterates (X) and gradients (g) if 'eval_out = 1' in the code
+%       the worst-case averaging matrix (Wh) if 'estim_W = 1' in the code  
+%
+% References:
+%   [1] Wei Shi, Qing Ling, Gang Wu, and Wotao Yin. Extra: An exact first-order 
+%       algorithm for decentralized consensus optimization. SIAM Journal on Optimization, 2014
+%   [2] S. Colla and J. M. Hendrickx, "Exploiting Agent Symmetries for Performance Analysis of Distributed
 %       Optimization Methods", 2024.
 
 verbose = 1;            % Print the problem set up and the results
 verbose_solv = 0;       % Print details of the solver
 trace_heuristic = 0;    % heuristic to minimize the dimension of the worst-case
 eval_out = 0;           % evaluate the worst-case local iterates and gradients and add them to the output
-estim_W = 0;            % Estimate the worst averaging matrix
+estim_W = 1;            % Estimate the worst averaging matrix
 
 
 %%% Set up performance estimation settings %%%
@@ -351,9 +375,6 @@ end
 % OUTPUT
 out.solverDetails = solverDetails;
 out.WCperformance = double(obj);
-out.GD = double(GD);
-out.GT = double(GC);
-out.GA = double(GA);
 out.Settings = Settings;
 
 % Evaluate the worst-case iterates (for a given number of agents)
@@ -403,19 +424,21 @@ if eval_out || estim_W
     Nc = 0;
     for u=1:r
         for i=1:nu(u)
-            Pi{Nc+i} = P(:,Nc*dimG+1:(Nc+1)*dimG);
+            Pi{Nc+i} = P(:,(Nc+i-1)*dimG+1:(Nc+i)*dimG);
             X_fl(Nc+i,:) = reshape(Pi{Nc+i}*Xcons(:,:),[1,(t)*d]);
             Y_fl(Nc+i,:) = reshape(Pi{Nc+i}*Wxcons(:,:),[1,(t)*d]);
         end
         Nc = Nc+nu(u);
     end
+    out.G = G;
     out.X = X_fl;
     out.Y = Y_fl;
 end
 
-% (8) (Try to) Recover the worst-case averaging matrix that links the solutions X and Y
+% (8) (Try to) Recover the worst-case averaging matrix that links the solutions X and Y 
+%     (not as good as for the agent-dependent PEP formulation)
 if estim_W
-    [Wh.W,Wh.r,Wh.status] = cons_matrix_estimate(lamW,X_fl,Y_fl,n);
+    [Wh.W,Wh.r,Wh.status] = worst_avg_mat_estimate(lamW,X_fl,Y_fl,n);
     if verbose && strcmp(type,'spectral_relaxed')
         fprintf("The estimate of the worst-case averaging matrix is ")
         Wh.W

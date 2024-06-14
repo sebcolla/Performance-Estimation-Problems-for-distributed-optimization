@@ -22,10 +22,10 @@ function set = extractSettings(S)
 %       initial iterate (default = 0)
 %       S.init: structure with details about the initial conditions
 %         init.x: string to specify the initial condition to
-%                 consider for the local iterates (x) (default = 'bounded_navg_it_err')
+%                 consider for the local iterates (x) (default = 'default')
 %         init.D: real constant to use in the initial condition (cond_x <= D^2) (default = 1)
 %         init.grad: string to choose the initial condition to
-%                    consider for the local gradients (default = '')
+%                    consider for the local gradients (default = 'default')
 %         init.E: real constant to use in the initial condition (cond_g <= E^2) (default = 1)
 %         init.gamma: real coefficient to use in combined conditions (cond_x + gamma*cond_g <= D^2)
 %                     (default = 1)

@@ -20,10 +20,10 @@ function out = EXTRA_agents(Settings)
 %       same initial iterate (default = 0)
 %       Settings.init: structure with details about the initial conditions
 %                init.x:    string to specify the initial condition to consider for 
-%                           the local iterates (x) (default = 'bounded_navg_it_err')
+%                           the local iterates (x) (default = 'uniform_bounded_it_err')
 %                init.D:    real constant to use in the initial condition (cond_x <= D^2) (default = 1)
 %                init.grad: string to choose the initial condition to consider for 
-%                           the local gradients (default = '')
+%                           the local gradients (default = 'uniform_bounded_grad*')
 %                init.E:    real constant to use in the initial condition (cond_g <= E^2) (default = 1)
 %                init.gamma: real coefficient to use in combined conditions (cond_x + gamma*cond_g <= D^2)
 %                           (default = 1)
@@ -43,6 +43,9 @@ function out = EXTRA_agents(Settings)
 %   dualnames:       coresponding names of the contraints
 %   Settings:        structure with all the settings used in the PEP
 %                   (including all the default values that have been set)
+%   Possible additional fields:
+%       iterates (X) and gradients (g) if 'eval_out = 1' in the code
+%       the worst-case averaging matrix (Wh) if 'estim_W = 1' in the code  
 %
 % References
 %   [1] Wei Shi, Qing Ling, Gang Wu, and Wotao Yin. Extra: An exact first-order 
@@ -98,8 +101,8 @@ switch init.x
     case {'navg_it_err_combined_grad','2'} 
         metric = 1/n*sumcell(foreach(@(x0, g0)(x0-xs)^2 + init.gamma*(g0 - 1/n*sumcell(G_saved(:,1)))^2,X(:,1), G_saved(:,1)));
         P.AddConstraint(metric <= init.D^2); % (avg_i ||xi0 - xs||^2) + gamma* (avg_i ||s0 - avg_i(gi0)||^2) <= D^2
-    otherwise % default is bounded_navg_it_err
-        P.AddConstraint(1/n*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= init.D^2);
+    otherwise % default is 'uniform_bounded_it_err'
+        P.AddMultiConstraints(@(xi) (xi-xs)^2 <= init.D^2, X(:,1));
 end
 
 % Initial condition for g0

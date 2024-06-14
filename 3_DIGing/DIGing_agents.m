@@ -25,7 +25,7 @@ function out = DIGing_agents(Settings)
 %                           the local iterates (x) (default = 'bounded_navg_it_err')
 %                init.D:    real constant to use in the initial condition (cond_x <= D^2) (default = 1)
 %                init.grad: string to choose the initial condition to consider for 
-%                           the local gradients (default = '')
+%                           the local gradients (default = 'bounded_grad0_cons_err')
 %                init.E:    real constant to use in the initial condition (cond_g <= E^2) (default = 1)
 %                init.gamma: real coefficient to use in combined conditions (cond_x + gamma*cond_g <= D^2)
 %                           (default = 1)
@@ -45,6 +45,9 @@ function out = DIGing_agents(Settings)
 %   dualnames:       coresponding names of the contraints
 %   Settings:        structure with all the settings used in the PEP
 %                   (including all the default values that have been set)
+%   Possible additional fields:
+%       iterates (X) and gradients (g) if 'eval_out = 1' in the code
+%       the worst-case averaging matrix (Wh) if 'estim_W = 1' in the code 
 %
 % References
 %   [1] A. Nedic, A. Olshevsky, and W. Shi, “Achieving geometric convergence
@@ -100,7 +103,7 @@ switch init.x
         P.AddConstraint(1/n*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= init.D^2);
     case {'uniform_bounded_it_err','1'}   %||xi0 - xs||^2 <= D^2 for all i
         P.AddMultiConstraints(@(xi) (xi-xs)^2 <= init.D^2, X(:,1));
-    case {'navg_it_err_combined_s','2'} % to use for CONV RATE analysis of DIGing
+    case {'navg_it_err_combined_s','2'} % to use for CONV RATE analysis of DIGing (with gamma = alpha)
         S(:,1) = P.MultiStartingPoints(n,eq_start); % s0 is a variable s.t. sum_i si0 = sum_i gi0
         P.AddConstraint((sumcell(S(:,1)) - sumcell(G_saved(:,1)))^2 == 0);
         metric = 1/n*sumcell(foreach(@(x0, s0)(x0-xs)^2 + init.gamma*(s0 - 1/n*sumcell(G_saved(:,1)))^2,X(:,1), S(:,1)));
