@@ -1,19 +1,21 @@
-function out = EXTRA_symmetrized(Settings)
-% Compute the worst-case performance of t steps of EXTRA [1] using a compact symmetrized PEP
-% formulation from [2]. The size of the resulting SDP PEP depends on
+function out = DIGing_symmetrized(Settings)
+% Compute the worst-case performance of t steps of DIGing [1] using a compact symmetrized PEP
+% formulation from [2]. The size of the resulting SDP PEP depends on 
 % the total number of iterations t and the number of equivalence classes of agents
 % (given by the length of Settings.nlist), but not on the total number of agents in the problem.
 % REQUIREMENTS: YALMIP toolbox with Mosek solver.
 % INPUT:
-%   Settings: structure with all the settings to use in the PEP for EXTRA.
+%   Settings: structure with all the settings to use in the PEP for DIGing. 
 %   The structure can include the following fields:
 %   (unspecified fields will be set to a default value)
 %       Settings.nlist: vector of size 'r' with the number of agents in each
 %       equivalence class. (default = [2])
-%       Settings.ninf: boolean to indicate if the number of agents tends to infinity.
+%       Settings.ninf: boolean to indicate if the number of agents tends to infinity. 
 %                      If ninf=1, then nlist contains size proportions of the equivalence class. (default = 0)
 %       Settings.t: number of iterations (default = 1)
 %       Settings.alpha: step-size (scalar or vector of t elements) (default = 1)
+%       Settings.ATC: boolean to indicate if ATC scheme of the algorithm
+%       should be used (1) or not (0) (default = 0)
 %       Settings.avg_mat: averaging matrix spectral description (one of the following options)
 %           - the second-largest eigenvalue modulus (scalar)
 %           - range of eigenvalues for the averaging matrix (except one): [lb, ub] with -1 < lb <= ub < 1.
@@ -23,16 +25,16 @@ function out = EXTRA_symmetrized(Settings)
 %       Settings.eq_start: boolean to indicate if the agents start with the
 %       same initial iterate (default = 0)
 %       Settings.init: structure with details about the initial conditions
-%                init.x:    string to specify the initial condition to consider for
-%                           the local iterates (x) (default = 'uniform_bounded_it_err')
+%                init.x:    string to specify the initial condition to consider for 
+%                           the local iterates (x) (default = 'bounded_navg_it_err')
 %                init.D:    real constant to use in the initial condition (cond_x <= D^2) (default = 1)
-%                init.grad: string to choose the initial condition to consider for
+%                init.grad: string to choose the initial condition to consider for 
 %                           the local gradients (default = 'none')
 %                init.E:    real constant to use in the initial condition (cond_g <= E^2) (default = 1)
 %                init.gamma: real coefficient to use in combined conditions (cond_x + gamma*cond_g <= D^2)
 %                           (default = 1)
 %       Settings.perf: string to specify the performance criterion to consider in PEP
-%                      (default = 'navg_last_it_err')
+%                      (default = 'fct_err_last_navg')
 %       Settings.fctClass: string to specify the class of functions (default = 'SmoothStronglyConvex')
 %       Settings.fctParam: structure with the parameter values of the function class
 %
@@ -44,11 +46,12 @@ function out = EXTRA_symmetrized(Settings)
 %   Possible additional fields:
 %       Full Gram matrix (G) of the PEP solution if 'eval_out = 1' in the code
 %       associated iterates (X) and gradients (g) if 'eval_out = 1' in the code
-%       the worst-case averaging matrix (Wh) if 'estim_W = 1' in the code
+%       the worst-case averaging matrix (Wh) if 'estim_W = 1' in the code  
 %
 % References:
-%   [1] Wei Shi, Qing Ling, Gang Wu, and Wotao Yin. Extra: An exact first-order
-%       algorithm for decentralized consensus optimization. SIAM Journal on Optimization, 2014
+%   [1] A. Nedic, A. Olshevsky, and W. Shi, “Achieving geometric convergence
+%       for distributed optimization over time-varying graphs,” SIAM Journal on
+%       Optimization, 2016.
 %   [2] S. Colla and J. M. Hendrickx, "Exploiting Agent Symmetries for Performance Analysis of Distributed
 %       Optimization Methods", 2024.
 
@@ -66,7 +69,7 @@ else
     warning("settings should be provided in a single structure - default settings used")
     Settings = extractSettings(struct());
 end
-nlist=Settings.nlist; ninf=Settings.ninf; t=Settings.t; alpha=Settings.alpha;
+nlist=Settings.nlist; ninf=Settings.ninf; t=Settings.t; alpha=Settings.alpha; ATC = Settings.ATC;
 type=Settings.type; lamW=Settings.avg_mat; tv_mat=Settings.tv_mat;
 eq_start=Settings.eq_start; init=Settings.init; perf=Settings.perf;
 fctClass=Settings.fctClass; fctParam=Settings.fctParam;
@@ -75,7 +78,7 @@ if ~strcmp(fctClass,'SmoothStronglyConvex') && ~strcmp(fctClass,'ConvexBoundedGr
     warning("Class of functions not supported. PEP solution computed for fctClass = 'SmoothStronglyConvex' (with L=1, mu=0.1)");
     % other classes of function requires different interpolation conditions
 end
-assert(strcmp(type,'spectral_relaxed'),"EXTRA_symmetrized only applies to spectral description of the averaging matrix (range of eigenvalues)");
+assert(strcmp(type,'spectral_relaxed'),"DIGing_symmetrized only applies to spectral description of the averaging matrix (range of eigenvalues)");
 
 if verbose
     fprintf("Settings provided for the PEP:\n");
@@ -119,8 +122,11 @@ end
 % Fi = [f0..ft (feval)]_i
 % coefficient f^k is such that Fi f^k = f_i^k
 
+% Defininfg the coefficient to access SDP variables easily
+% Pi = [x0 g0...gK Wx0...WxK-1 Ws0...WsK-1 geval xeval s0 gs]_i
+% Fi = [f0..fK feval]_i
 
-dimG = 2*(t+1)+3; % dimension of the Gram matrix
+dimG = 3*(t+1)+3; % dimension of the Gram matrix
 dimF = t+2;  % dimension of the vector of function values
 nbPts = t+3; % number of points to use for the interpolation of the local functions
 
@@ -140,21 +146,31 @@ fs   = zeros(dimF,1); % local function value at optimum
 x  = zeros(dimG, t+1);  x(1,1)      = 1;
 g  = zeros(dimG, t+1);  g(2:t+2,:)  = eye(t+1);
 f  = zeros(dimF,t+1);   f(1:t+1,:)  = eye(t+1);
+s  = zeros(dimG, t+1);  
+if strcmp(init.x,'navg_it_err_combined_grad') || strcmp(init.x, '2');
+    s(end-1,1) = 1 ;
+else
+    s(2,1) = 1;
+end
 
 % coeff for the point common to all agents, used in the performance criterion
-gc  = zeros(dimG,1); gc(2*(t+1)+1)= 1;
-xc  = zeros(dimG,1); xc(2*(t+1)+2)= 1;
+gc  = zeros(dimG,1); gc(3*(t+1)+1)= 1;
+xc  = zeros(dimG,1); xc(3*(t+1)+2)= 1;
 fc  = zeros(dimF,1); fc(t+2)      = 1;
 
 % Consensus iterates coeff
 Wx = zeros(dimG, t); Wx(t+3:2*t+2,:)    = eye(t);
+Ws = zeros(dimG, t); Ws(2*t+3:3*t+2,:)  = eye(t);
 
-% EXTRA iterates coeff
-if t>0
-    x(:,2) = Wx(:,1) - alpha(1)*g(:,1);
-end
-for k = 1:t-1
-    x(:,k+2) = x(:,k+1) + Wx(:,k+1) -1/2*(x(:,k) + Wx(:,k) ) - alpha(k)*(g(:,k+1) - g(:,k));
+% DIGing iterates coeff
+for k = 1:t
+    if ~ATC % (classic DIGing)
+        x(:,k+1) = Wx(:,k) - alpha(k)*s(:,k);
+        s(:,k+1) = Ws(:,k) + g(:,k+1) - g(:,k);
+    else % (ATC)
+        x(:,k+1) = Wx(:,k);
+        s(:,k+1) = Ws(:,k);
+    end
 end
 
 % set of points to interpolate for the local functions
@@ -163,8 +179,13 @@ Ginterp = [gs, g, gc];
 Finterp = [fs, f, fc];
 
 % set of pair of points to interpolate for the averaging matrix
-Xcons = [x(:,1:t)];
-Wxcons = [Wx];
+if ~ATC
+    Xcons = [x(:,1:t), s(:,1:t)];
+    Wxcons = [Wx, Ws];
+else
+    Xcons = [x(:,1:t) - alpha.*s(:,1:t), s(:,1:t) + g(:,2:t+1) - g(:,1:t)];
+    Wxcons = [Wx, Ws];
+end
 
 %% PEP problem
 
@@ -290,13 +311,12 @@ switch init.x
         for u=1:r % for each class u
             cons = cons + ((x(:,1)-xs).'*(Ga{u})*(x(:,1)-xs) <= init.D^2);
         end
-    case {'navg_it_err_combined_grad','2'}
-        % (avg_i ||xi0 - xs||^2) + gamma* (avg_i ||gi0 - avg_i(gi0)||^2) <= D^2
-        cons = cons + (x(:,1).'*(GA)*x(:,1) + init.gamma*(g(:,1).'*(GD)*g(:,1)) <= init.D^2);
-    otherwise % default (for EXTRA) is 'uniform_bounded_it_err'
-        for u=1:r % for each class u
-            cons = cons + ((x(:,1)-xs).'*(Ga{u})*(x(:,1)-xs) <= init.D^2);
-        end
+    case {'navg_it_err_combined_s','2'} % to use for CONV RATE analysis of DIGing (with gamma = alpha)
+        cons = cons + ((s(:,1)-g(:,1)).'*GC*(s(:,1)-g(:,1)) == 0); % sum_i si0 = sum_i gi0
+        % (avg_i ||xi0 - xs||^2) + gamma* (avg_i ||si0 - avg_i(gi0)||^2) <= D^2
+        cons = cons + (x(:,1).'*(GA)*x(:,1) + init.gamma*(s(:,1).'*GA*s(:,1) + (g(:,1) - 2*s(:,1)).'*(GC)*g(:,1)) <= init.D^2);
+    otherwise % default is 'bounded_navg_it_err'
+        cons = cons + ((x(:,1)-xs).'*(GA)*(x(:,1)-xs) <= init.D^2);
 end
 
 % Initial condition for g0
@@ -338,8 +358,8 @@ switch perf
         for k = 1:t+1
             obj = obj + (x(:,k)-xs).'*GA*(x(:,k)-xs)/(t+1);
         end
-    case {'navg_it_err_combined_grad','2'}
-        obj = x(:,t+1).'*(GA)*x(:,t+1) + init.gamma*(g(:,t+1).'*GD*g(:,t+1));
+    case {'navg_it_err_combined_s','2'} % (avg_i ||xi^k - xs||^2) + gamma* (avg_i ||si^k - avg_i(gi^k)||^2)
+        obj = x(:,t+1).'*(GA)*x(:,t+1) + init.gamma*(s(:,t+1).'*GA*s(:,t+1) + (g(:,t+1) - 2*s(:,t+1)).'*(GC)*g(:,t+1));
     case {'it_err_last_navg','3'} % ||avg_i x_i^t - x*||^2
         obj = (x(:,t+1)-xs).'*GC*(x(:,t+1)-xs);
     case {'it_err_tavg_navg','4'} % ||avg_i avg_k x_i^k - x*||^2
@@ -358,7 +378,7 @@ switch perf
         obj = (x(:,t+1)-xs).'*Ga{2}*(x(:,t+1)-xs);
         obj_exclude = (x(:,t+1)-xs).'*Ga{1}*(x(:,t+1)-xs);
         cons = cons + (obj_exclude >= obj);
-    otherwise % default: 'navg_last_it_err'
+    otherwise % default: 'navg_last_it_err' 
         obj = (x(:,t+1)-xs).'*GA*(x(:,t+1)-xs); % 1/n sum_i ||x_i^t - x*||2
 end
 
@@ -391,7 +411,7 @@ if eval_out || estim_W
     
 end
 
-% (8) (Try to) Recover the worst-case averaging matrix that links the solutions X and Y
+% (8) (Try to) Recover the worst-case averaging matrix that links the solutions X and Y 
 %     (not as good as for the agent-dependent PEP formulation)
 if estim_W
     [Wh.W,Wh.r,Wh.status] = worst_avg_mat_estimate(lamW,out.X,out.Y,n);
@@ -402,6 +422,5 @@ if estim_W
     end
     out.Wh = Wh;
 end
+
 end
-
-

@@ -30,7 +30,7 @@ function set = extractSettings(S)
 %         init.gamma: real coefficient to use in combined conditions (cond_x + gamma*cond_g <= D^2)
 %                     (default = 1)
 %       S.perf: string to specify the performance criterion to consider in PEP 
-%               (default = 'fct_err_last_navg')
+%               (default = 'default')
 %       S.fctClass: string to specify the class of functions 
 %                   (default = 'SmoothStronglyConvex')
 %       S.fctParam: structure with the parameter values of the function class
@@ -188,7 +188,7 @@ end
 if isfield(S,'perf')
     set.perf = lower(S.perf);
 else % default
-    set.perf = 'fct_err_last_navg';
+    set.perf = 'default';
 end
 
 % Summary of the Settings

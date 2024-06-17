@@ -1,16 +1,16 @@
-function out = EXTRA_symmetrized(Settings)
-% Compute the worst-case performance of t steps of EXTRA [1] using a compact symmetrized PEP
-% formulation from [2]. The size of the resulting SDP PEP depends on
+function out = DGD_symmetrized(Settings)
+% Compute the worst-case performance of t steps of DGD [1] using a compact symmetrized PEP
+% formulation from [2]. The size of the resulting SDP PEP depends on 
 % the total number of iterations t and the number of equivalence classes of agents
 % (given by the length of Settings.nlist), but not on the total number of agents in the problem.
 % REQUIREMENTS: YALMIP toolbox with Mosek solver.
 % INPUT:
-%   Settings: structure with all the settings to use in the PEP for EXTRA.
+%   Settings: structure with all the settings to use in the PEP for DGD. 
 %   The structure can include the following fields:
 %   (unspecified fields will be set to a default value)
 %       Settings.nlist: vector of size 'r' with the number of agents in each
 %       equivalence class. (default = [2])
-%       Settings.ninf: boolean to indicate if the number of agents tends to infinity.
+%       Settings.ninf: boolean to indicate if the number of agents tends to infinity. 
 %                      If ninf=1, then nlist contains size proportions of the equivalence class. (default = 0)
 %       Settings.t: number of iterations (default = 1)
 %       Settings.alpha: step-size (scalar or vector of t elements) (default = 1)
@@ -23,16 +23,16 @@ function out = EXTRA_symmetrized(Settings)
 %       Settings.eq_start: boolean to indicate if the agents start with the
 %       same initial iterate (default = 0)
 %       Settings.init: structure with details about the initial conditions
-%                init.x:    string to specify the initial condition to consider for
-%                           the local iterates (x) (default = 'uniform_bounded_it_err')
+%                init.x:    string to specify the initial condition to consider for 
+%                           the local iterates (x) (default = 'bounded_navg_it_err')
 %                init.D:    real constant to use in the initial condition (cond_x <= D^2) (default = 1)
-%                init.grad: string to choose the initial condition to consider for
+%                init.grad: string to choose the initial condition to consider for 
 %                           the local gradients (default = 'none')
 %                init.E:    real constant to use in the initial condition (cond_g <= E^2) (default = 1)
 %                init.gamma: real coefficient to use in combined conditions (cond_x + gamma*cond_g <= D^2)
 %                           (default = 1)
 %       Settings.perf: string to specify the performance criterion to consider in PEP
-%                      (default = 'navg_last_it_err')
+%                      (default = 'fct_err_last_navg')
 %       Settings.fctClass: string to specify the class of functions (default = 'SmoothStronglyConvex')
 %       Settings.fctParam: structure with the parameter values of the function class
 %
@@ -44,11 +44,11 @@ function out = EXTRA_symmetrized(Settings)
 %   Possible additional fields:
 %       Full Gram matrix (G) of the PEP solution if 'eval_out = 1' in the code
 %       associated iterates (X) and gradients (g) if 'eval_out = 1' in the code
-%       the worst-case averaging matrix (Wh) if 'estim_W = 1' in the code
+%       the worst-case averaging matrix (Wh) if 'estim_W = 1' in the code  
 %
 % References:
-%   [1] Wei Shi, Qing Ling, Gang Wu, and Wotao Yin. Extra: An exact first-order
-%       algorithm for decentralized consensus optimization. SIAM Journal on Optimization, 2014
+%   [1] Angelia Nedic and Asuman Ozdaglar. Distributed subgradient methods 
+%       for multi-agent optimization. IEEE Transactions on Automatic Control, 2009.
 %   [2] S. Colla and J. M. Hendrickx, "Exploiting Agent Symmetries for Performance Analysis of Distributed
 %       Optimization Methods", 2024.
 
@@ -75,7 +75,7 @@ if ~strcmp(fctClass,'SmoothStronglyConvex') && ~strcmp(fctClass,'ConvexBoundedGr
     warning("Class of functions not supported. PEP solution computed for fctClass = 'SmoothStronglyConvex' (with L=1, mu=0.1)");
     % other classes of function requires different interpolation conditions
 end
-assert(strcmp(type,'spectral_relaxed'),"EXTRA_symmetrized only applies to spectral description of the averaging matrix (range of eigenvalues)");
+assert(strcmp(type,'spectral_relaxed'),"DGD_symmetrized only applies to spectral description of the averaging matrix (range of eigenvalues)");
 
 if verbose
     fprintf("Settings provided for the PEP:\n");
@@ -149,12 +149,9 @@ fc  = zeros(dimF,1); fc(t+2)      = 1;
 % Consensus iterates coeff
 Wx = zeros(dimG, t); Wx(t+3:2*t+2,:)    = eye(t);
 
-% EXTRA iterates coeff
-if t>0
-    x(:,2) = Wx(:,1) - alpha(1)*g(:,1);
-end
-for k = 1:t-1
-    x(:,k+2) = x(:,k+1) + Wx(:,k+1) -1/2*(x(:,k) + Wx(:,k) ) - alpha(k)*(g(:,k+1) - g(:,k));
+% DGD iterates coeff
+for k = 1:t
+    x(:,k+1) = Wx(:,k) - alpha(k)*g(:,k); 
 end
 
 % set of points to interpolate for the local functions
@@ -291,12 +288,10 @@ switch init.x
             cons = cons + ((x(:,1)-xs).'*(Ga{u})*(x(:,1)-xs) <= init.D^2);
         end
     case {'navg_it_err_combined_grad','2'}
-        % (avg_i ||xi0 - xs||^2) + gamma* (avg_i ||gi0 - avg_i(gi0)||^2) <= D^2
+        % (avg_i ||xi0 - xs||^2) + gamma* (avg_i ||g0 - avg_i(gi0)||^2) <= D^2
         cons = cons + (x(:,1).'*(GA)*x(:,1) + init.gamma*(g(:,1).'*(GD)*g(:,1)) <= init.D^2);
-    otherwise % default (for EXTRA) is 'uniform_bounded_it_err'
-        for u=1:r % for each class u
-            cons = cons + ((x(:,1)-xs).'*(Ga{u})*(x(:,1)-xs) <= init.D^2);
-        end
+    otherwise % default (for DGD) is 'bounded_navg_it_err'
+        cons = cons + ((x(:,1)-xs).'*(GA)*(x(:,1)-xs) <= init.D^2);
 end
 
 % Initial condition for g0
@@ -358,7 +353,7 @@ switch perf
         obj = (x(:,t+1)-xs).'*Ga{2}*(x(:,t+1)-xs);
         obj_exclude = (x(:,t+1)-xs).'*Ga{1}*(x(:,t+1)-xs);
         cons = cons + (obj_exclude >= obj);
-    otherwise % default: 'navg_last_it_err'
+    otherwise % default: 'navg_last_it_err' 
         obj = (x(:,t+1)-xs).'*GA*(x(:,t+1)-xs); % 1/n sum_i ||x_i^t - x*||2
 end
 
@@ -391,7 +386,7 @@ if eval_out || estim_W
     
 end
 
-% (8) (Try to) Recover the worst-case averaging matrix that links the solutions X and Y
+% (8) (Try to) Recover the worst-case averaging matrix that links the solutions X and Y 
 %     (not as good as for the agent-dependent PEP formulation)
 if estim_W
     [Wh.W,Wh.r,Wh.status] = worst_avg_mat_estimate(lamW,out.X,out.Y,n);
@@ -402,6 +397,7 @@ if estim_W
     end
     out.Wh = Wh;
 end
+
 end
 
 

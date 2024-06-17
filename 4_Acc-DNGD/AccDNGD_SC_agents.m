@@ -26,12 +26,12 @@ function out = AccDNGD_SC_agents(Settings)
 %                           the local iterates (x) (default = 'bounded_navg_it_err')
 %                init.D:    real constant to use in the initial condition (cond_x <= D^2) (default = 1)
 %                init.grad: string to choose the initial condition to consider for 
-%                           the local gradients (default = 'bounded_grad0_cons_err')
+%                           the local gradients (default = 'none')
 %                init.E:    real constant to use in the initial condition (cond_g <= E^2) (default = 1)
 %                init.gamma: real coefficient to use in combined conditions (cond_x + gamma*cond_g <= D^2)
 %                           (default = 1)
 %       Settings.perf: string to specify the performance criterion to consider in PEP
-%                      (default = 'fct_err_last_navg')
+%                      (default = 'navg_last_it_err')
 %       Settings.fctClass: string to specify the class of functions
 %                          (default = 'SmoothStronglyConvex')
 %       Settings.fctParam: structure with the parameter values of the function class
@@ -112,7 +112,7 @@ switch init.x
         P.AddMultiConstraints(@(xi) (xi-xs)^2 <= init.D^2, X(:,1));
     case {'navg_it_err_combined_grad','2'}
         metric = 1/n*sumcell(foreach(@(x0, g0)(x0-xs)^2 + init.gamma*(g0 - 1/n*sumcell(G_saved(:,1)))^2,X(:,1), G_saved(:,1)));
-        P.AddConstraint(metric <= init.D^2); % (avg_i ||xi0 - xs||^2) + gamma* (avg_i ||s0 - avg_i(gi0)||^2) <= D^2
+        P.AddConstraint(metric <= init.D^2); % (avg_i ||xi0 - xs||^2) + gamma* (avg_i ||gi0 - avg_i(gi0)||^2) <= D^2
     otherwise % default is bounded_navg_it_err
         P.AddConstraint(1/n*sumcell(foreach(@(xi) (xi-xs)^2,X(:,1))) <= init.D^2);
 end
@@ -131,10 +131,7 @@ switch init.grad
     case {'uniform_bounded_grad*','4'}    % ||gi(x*)||^2 <= E^2 for all i
         [Gis,~] = LocalOracles(Fi,repmat({xs},n,1));
         P.AddMultiConstraints(@(gi) gi^2 <= init.E^2, Gis);
-    otherwise % default is 'bounded_grad0_cons_err'
-        if ~strcmp(init.x,'navg_it_err_combined_grad') && ~strcmp(init.x,'2')
-            P.AddConstraint(1/n*sumcell(foreach(@(gi) (gi - 1/n*sumcell(G_saved(:,1)))^2,G_saved(:,1))) <= init.E^2);
-        end
+    otherwise % default is 'none'
 end
 
 % (3) Set up the averaging matrix
@@ -172,7 +169,7 @@ switch perf
         metric = 1/n*sumcell(foreach(@(xit)(xit-xs)^2,X(:,t+1)));
     case {'tavg_navg_it_err','1'} % avg_i avg_k ||x_i^k - x*||2
         metric = 1/((t+1)*n)*sumcell(foreach(@(xit)(xit-xs)^2,X(:,:)));
-    case {'navg_it_err_combined_grad','2'}
+    case {'navg_it_err_combined_grad','2'} % (avg_i ||xi^k - xs||^2) + gamma* (avg_i ||gi^k - avg_i(gi^k)||^2)
         metric = 1/n*sumcell(foreach(@(xi,gi)(xi-xs)^2 + init.gamma*(gi - 1/n*sumcell(G_saved(:,t+1)))^2, X(:,t+1), G_saved(:,t+1)));
     case {'it_err_last_navg','3'} % ||avg_i x_i^t - x*||^2
         xperf = sumcell(X(:,t+1))/(n);

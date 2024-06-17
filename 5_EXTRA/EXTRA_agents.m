@@ -23,7 +23,7 @@ function out = EXTRA_agents(Settings)
 %                           the local iterates (x) (default = 'uniform_bounded_it_err')
 %                init.D:    real constant to use in the initial condition (cond_x <= D^2) (default = 1)
 %                init.grad: string to choose the initial condition to consider for 
-%                           the local gradients (default = 'uniform_bounded_grad*')
+%                           the local gradients (default = 'none')
 %                init.E:    real constant to use in the initial condition (cond_g <= E^2) (default = 1)
 %                init.gamma: real coefficient to use in combined conditions (cond_x + gamma*cond_g <= D^2)
 %                           (default = 1)
@@ -100,7 +100,7 @@ switch init.x
         P.AddMultiConstraints(@(xi) (xi-xs)^2 <= init.D^2, X(:,1));
     case {'navg_it_err_combined_grad','2'} 
         metric = 1/n*sumcell(foreach(@(x0, g0)(x0-xs)^2 + init.gamma*(g0 - 1/n*sumcell(G_saved(:,1)))^2,X(:,1), G_saved(:,1)));
-        P.AddConstraint(metric <= init.D^2); % (avg_i ||xi0 - xs||^2) + gamma* (avg_i ||s0 - avg_i(gi0)||^2) <= D^2
+        P.AddConstraint(metric <= init.D^2); % (avg_i ||xi0 - xs||^2) + gamma* (avg_i ||gi0 - avg_i(gi0)||^2) <= D^2
     otherwise % default is 'uniform_bounded_it_err'
         P.AddMultiConstraints(@(xi) (xi-xs)^2 <= init.D^2, X(:,1));
 end
@@ -119,11 +119,7 @@ switch init.grad
     case {'uniform_bounded_grad*','4'}    % ||gi(x*)||^2 <= E^2 for all i
         [Gis,~] = LocalOracles(Fi,repmat({xs},n,1));
         P.AddMultiConstraints(@(gi) gi^2 <= init.E^2, Gis);
-    otherwise % default (for EXTRA) is 'uniform_bounded_grad*'
-        if ~strcmp(init.x,'navg_it_err_combined_grad') && ~strcmp(init.x,'2')
-            [Gis,~] = LocalOracles(Fi,repmat({xs},n,1));
-            P.AddMultiConstraints(@(gi) gi^2 <= init.E^2, Gis);
-        end
+    otherwise % default is 'none'
 end
 
 % (3) Set up the averaging matrix

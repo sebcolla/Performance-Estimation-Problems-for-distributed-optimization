@@ -22,12 +22,12 @@ function out = DGD_agents(Settings)
 %                           the local iterates (x) (default = 'bounded_navg_it_err')
 %                init.D:    real constant to use in the initial condition (cond_x <= D^2) (default = 1)
 %                init.grad: string to choose the initial condition to consider for 
-%                           the local gradients (default = None)
+%                           the local gradients (default = 'none')
 %                init.E:    real constant to use in the initial condition (cond_g <= E^2) (default = 1)
 %                init.gamma: real coefficient to use in combined conditions (cond_x + gamma*cond_g <= D^2)
 %                           (default = 1)
 %       Settings.perf: string to specify the performance criterion to consider in PEP
-%                      (default = 'fct_err_last_navg')
+%                      (default = 'navg_last_it_err')
 %       Settings.fctClass: string to specify the class of functions
 %                          (default = 'SmoothStronglyConvex')
 %       Settings.fctParam: structure with the parameter values of the function class
@@ -48,7 +48,7 @@ function out = DGD_agents(Settings)
 %
 % Reference
 %   [1] Angelia Nedic and Asuman Ozdaglar. Distributed subgradient methods 
-%   for multi-agent optimization. IEEE Transactions on Automatic Control, 2009.
+%       for multi-agent optimization. IEEE Transactions on Automatic Control, 2009.
 
 
 verbose = 0;            % print the problem set up and the results
@@ -119,8 +119,7 @@ switch init.grad
     case {'uniform_bounded_grad*','4'}    % ||gi(x*)||^2 <= E^2 for all i
         [gis,~] = LocalOracles(Fi,repmat({xs},n,1));
         P.AddMultiConstraints(@(gi) gi^2 <= init.E^2, gis);
-    otherwise % default
-        % none
+    otherwise % default is 'none'
 end
 
 % (3) Set up the averaging matrix
@@ -142,8 +141,8 @@ switch perf
         metric = 1/n*sumcell(foreach(@(xit)(xit-xs)^2,X(:,t+1)));
     case {'tavg_navg_it_err','1'} % avg_i avg_k ||x_i^k - x*||2
         metric = 1/((t+1)*n)*sumcell(foreach(@(xit)(xit-xs)^2,X(:,:)));
-    case {'navg_it_err_combined_grad','2'}
-        metric = 1/n*sumcell(foreach(@(xi,si)(xi-xs)^2 + init.gamma*(si - 1/n*sumcell(G_saved(:,t+1)))^2, X(:,t+1), G_saved(:,t+1)));
+    case {'navg_it_err_combined_grad','2'} % (avg_i ||xi^k - xs||^2) + gamma* (avg_i ||gi^k - avg_i(gi^k)||^2)
+        metric = 1/n*sumcell(foreach(@(xi,gi)(xi-xs)^2 + init.gamma*(gi - 1/n*sumcell(G_saved(:,t+1)))^2, X(:,t+1), G_saved(:,t+1)));
     case {'it_err_last_navg','3'} % ||avg_i x_i^t - x*||^2
         xperf = sumcell(X(:,t+1))/(n);
         metric = (xperf-xs)^2;
@@ -161,9 +160,8 @@ switch perf
     case {'fct_err_tavg_navg','8'} % average iterate of agent average function error: F(avg_k xb(k)) - F(x*)
         xperf = sumcell(X)/((t+1)*n);
         metric = Fav.value(xperf)-Fs;
-    otherwise % default: last_navg_fct_err
-        xperf = sumcell(X(:,t+1))/(n);
-        metric = Fav.value(xperf)-Fs;
+    otherwise  % default: 'navg_last_it_err'
+        metric = 1/n*sumcell(foreach(@(xit)(xit-xs)^2,X(:,t+1)));
 end
 
 P.PerformanceMetric(metric);
