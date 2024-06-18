@@ -1,7 +1,7 @@
 function out = EXTRA_symmetrized(Settings)
-% Compute the worst-case performance of t steps of EXTRA [1] using a compact symmetrized PEP
-% formulation from [2]. The size of the resulting SDP PEP depends on
-% the total number of iterations t and the number of equivalence classes of agents
+% Compute the worst-case performance of EXTRA [1] under the 'Settings' provided and 
+% using a compact symmetrized PEP formulation from [2]. The size of the resulting SDP PEP 
+% depends on the total number of iterations t and the number of equivalence classes of agents
 % (given by the length of Settings.nlist), but not on the total number of agents in the problem.
 % REQUIREMENTS: YALMIP toolbox with Mosek solver.
 % INPUT:
@@ -112,11 +112,11 @@ end
 
 %% Defining the coefficient vectors to access SDP variables easily
 % Gram matrix G = P^TP with P = [P1 ... Pn]
-% Pi = [x0 g0...gt Wx0...Wxt-1 (geval xeval) gs]_i
+% Pi = [x0 g0...gt Wx0...Wxt-1 gc xc gs]_i
 % coefficient x^k is such that Pi x^k = x_i^k
 
 % Vector of function values F = [F1 .. Fn]
-% Fi = [f0..ft (feval)]_i
+% Fi = [f0..ft fc]_i
 % coefficient f^k is such that Fi f^k = f_i^k
 
 
@@ -362,7 +362,7 @@ switch perf
         obj = (x(:,t+1)-xs).'*GA*(x(:,t+1)-xs); % 1/n sum_i ||x_i^t - x*||2
 end
 
-% (7) Solve the SDP PEP
+% (8) Solve the SDP PEP
 solver_opt      = sdpsettings('solver','mosek','verbose',verbose_solv);
 solverDetails   = optimize(cons,-obj,solver_opt);
 
@@ -391,7 +391,7 @@ if eval_out || estim_W
     
 end
 
-% (8) (Try to) Recover the worst-case averaging matrix that links the solutions X and Y
+% (9) (Try to) Recover the worst-case averaging matrix that links the solutions X and Y
 %     (not as good as for the agent-dependent PEP formulation)
 if estim_W
     [Wh.W,Wh.r,Wh.status] = worst_avg_mat_estimate(lamW,out.X,out.Y,n);

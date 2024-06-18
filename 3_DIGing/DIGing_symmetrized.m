@@ -1,7 +1,7 @@
 function out = DIGing_symmetrized(Settings)
-% Compute the worst-case performance of t steps of DIGing [1] using a compact symmetrized PEP
-% formulation from [2]. The size of the resulting SDP PEP depends on 
-% the total number of iterations t and the number of equivalence classes of agents
+% Compute the worst-case performance of DIGing [1] under the 'Settings' provided and 
+% using a compact symmetrized PEP formulation from [2]. The size of the resulting SDP PEP 
+% depends on the total number of iterations t and the number of equivalence classes of agents
 % (given by the length of Settings.nlist), but not on the total number of agents in the problem.
 % REQUIREMENTS: YALMIP toolbox with Mosek solver.
 % INPUT:
@@ -115,11 +115,11 @@ end
 
 %% Defining the coefficient vectors to access SDP variables easily
 % Gram matrix G = P^TP with P = [P1 ... Pn]
-% Pi = [x0 g0...gt Wx0...Wxt-1 (geval xeval) gs]_i
+% Pi = [x0 g0...gt Wx0...Wxt-1 Ws0...Wst-1 gc xc s0 gs]_i
 % coefficient x^k is such that Pi x^k = x_i^k
 
 % Vector of function values F = [F1 .. Fn]
-% Fi = [f0..ft (feval)]_i
+% Fi = [f0..ft fc]_i
 % coefficient f^k is such that Fi f^k = f_i^k
 
 % Defininfg the coefficient to access SDP variables easily
@@ -359,6 +359,7 @@ switch perf
             obj = obj + (x(:,k)-xs).'*GA*(x(:,k)-xs)/(t+1);
         end
     case {'navg_it_err_combined_s','2'} % (avg_i ||xi^k - xs||^2) + gamma* (avg_i ||si^k - avg_i(gi^k)||^2)
+        % to use for CONV RATE analysis of DIGing (with gamma = alpha)
         obj = x(:,t+1).'*(GA)*x(:,t+1) + init.gamma*(s(:,t+1).'*GA*s(:,t+1) + (g(:,t+1) - 2*s(:,t+1)).'*(GC)*g(:,t+1));
     case {'it_err_last_navg','3'} % ||avg_i x_i^t - x*||^2
         obj = (x(:,t+1)-xs).'*GC*(x(:,t+1)-xs);
@@ -382,7 +383,7 @@ switch perf
         obj = (x(:,t+1)-xs).'*GA*(x(:,t+1)-xs); % 1/n sum_i ||x_i^t - x*||2
 end
 
-% (7) Solve the SDP PEP
+% (8) Solve the SDP PEP
 solver_opt      = sdpsettings('solver','mosek','verbose',verbose_solv);
 solverDetails   = optimize(cons,-obj,solver_opt);
 
@@ -411,7 +412,7 @@ if eval_out || estim_W
     
 end
 
-% (8) (Try to) Recover the worst-case averaging matrix that links the solutions X and Y 
+% (9) (Try to) Recover the worst-case averaging matrix that links the solutions X and Y 
 %     (not as good as for the agent-dependent PEP formulation)
 if estim_W
     [Wh.W,Wh.r,Wh.status] = worst_avg_mat_estimate(lamW,out.X,out.Y,n);

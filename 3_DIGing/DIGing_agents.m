@@ -1,5 +1,6 @@
 function out = DIGing_agents(Settings)
-% Compute the worst-case performance of DIGing under the 'Settings' provided.
+% Compute the worst-case performance of DIGing [1] under the 'Settings' provided, 
+% using the agent-dependent PEP formulation [2].
 % The algorithm has been proposed in [1] and is suited to smooth and strongly-convex functions.
 % INPUT:
 %   Settings: structure with all the settings to use in the PEP for DIGing. 
@@ -53,6 +54,8 @@ function out = DIGing_agents(Settings)
 %   [1] A. Nedic, A. Olshevsky, and W. Shi, “Achieving geometric convergence
 %       for distributed optimization over time-varying graphs,” SIAM Journal on
 %       Optimization, 2016.
+%   [2] Colla, Sebastien, and Julien M. Hendrickx. "Automatic Performance Estimation
+%       for Decentralized Optimization" (2022).
 
 verbose = 0;            % print the problem set up and the results
 trace_heuristic = 0;    % heuristic to minimize the dimension of the worst-case (1 to activate)
@@ -158,6 +161,7 @@ switch perf
     case {'tavg_navg_it_err','1'} % avg_i avg_k ||x_i^k - x*||2
         metric = 1/((t+1)*n)*sumcell(foreach(@(xit)(xit-xs)^2,X(:,:)));
     case {'navg_it_err_combined_s','2'} % (avg_i ||xi^k - xs||^2) + gamma* (avg_i ||si^k - avg_i(gi^k)||^2)
+        % to use for CONV RATE analysis of DIGing (with gamma = alpha)
         metric = 1/n*sumcell(foreach(@(xi,si)(xi-xs)^2 + init.gamma*(si - 1/n*sumcell(G_saved(:,t+1)))^2, X(:,t+1), S(:,t+1)));
     case {'it_err_last_navg','3'} % ||avg_i x_i^t - x*||^2
         xperf = sumcell(X(:,t+1))/(n);

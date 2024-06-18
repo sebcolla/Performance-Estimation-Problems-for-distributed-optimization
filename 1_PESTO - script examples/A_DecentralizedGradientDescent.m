@@ -38,10 +38,10 @@ N = 3;                      % Number of agents
 % (b) Spectral formulation
 % Comment if you use (a) Exact formulation
 type = 'spectral_relaxed';  % type of representation for the averaging matrix
-mat = [-0.5,0.5];           % Range of eigenvalues for the symmetric(generalized) doubly stochastic averaging matrix W
+mat = [-0.8,0.8];           % Range of eigenvalues for the symmetric(generalized) doubly stochastic averaging matrix W
 
 % The algorithm
-K = 5;                     % Number of iterations of DGD
+K = 15;                     % Number of iterations of DGD
 alpha = 1/sqrt(K);          % Step-size used in DGD (constant)
 %alpha = 1./(1:K);          % Alternative: Step-sizes used in DGD (diminishing)
 equalStart = 1;             % All agents starts with the same iterate x0

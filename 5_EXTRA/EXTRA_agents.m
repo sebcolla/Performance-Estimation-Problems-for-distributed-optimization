@@ -1,6 +1,6 @@
 function out = EXTRA_agents(Settings)
-% Compute the worst-case performance of EXTRA under the 'Settings' provided.
-% The algorithm has been proposed in [1].
+% Compute the worst-case performance of EXTRA [1] under the 'Settings' provided, 
+% using the agent-dependent PEP formulation [2].
 % INPUT:
 %   Settings: structure with all the settings to use in the PEP for EXTRA. 
 %   The structure can include the following fields:
@@ -49,7 +49,9 @@ function out = EXTRA_agents(Settings)
 %
 % References
 %   [1] Wei Shi, Qing Ling, Gang Wu, and Wotao Yin. Extra: An exact first-order 
-%   algorithm for decentralized consensus optimization. SIAM Journal on Optimization, 2014
+%       algorithm for decentralized consensus optimization. SIAM Journal on Optimization, 2014
+%   [2] Colla, Sebastien, and Julien M. Hendrickx. "Automatic Performance Estimation
+%       for Decentralized Optimization" (2022).
 
 verbose = 1;            % print the problem set up and the results
 trace_heuristic = 0;    % heuristic to minimize the dimension of the worst-case (1 to activate)

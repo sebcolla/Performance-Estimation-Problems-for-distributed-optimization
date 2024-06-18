@@ -111,9 +111,9 @@ if isfield(S,'avg_mat')
     end
 elseif isfield(S,'lam') % alternative notation
     set.type = 'spectral_relaxed';
-    if length(S.avg_mat)==1 % SLEM description
+    if length(S.lam)==1 % SLEM description
         set.avg_mat = [-S.lam,S.lam];
-    elseif length(S.avg_mat)==2 % eigenvalue range
+    elseif length(S.lam)==2 % eigenvalue range
         set.avg_mat = S.lam;
     end
 else % default

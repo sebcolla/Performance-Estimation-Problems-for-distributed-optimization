@@ -1,5 +1,6 @@
 function out = AccDNGD_SC_agents(Settings)
-% Compute the worst-case performance of the Acc-DNGD-SC under the 'Settings' provided. 
+% Compute the worst-case performance of the Acc-DNGD-SC under the 'Settings' provided,
+% using the agent-dependent PEP formulation [2].
 % The algorithm has been proposed in [1] and is suited to smooth and strongly-convex functions. 
 % Another version of the algorithm exists for convex functions.
 % INPUT:
@@ -51,8 +52,10 @@ function out = AccDNGD_SC_agents(Settings)
 %       the worst-case averaging matrix (Wh) if 'estim_W = 1' in the code 
 %
 % References:
-%[1] G. Qu and N. Li, “Accelerated distributed nesterov gradient descent”,
-%IEEE Transactions on Automatic Control, 2020.
+%   [1] G. Qu and N. Li, “Accelerated distributed nesterov gradient descent”,
+%       IEEE Transactions on Automatic Control, 2020.
+%   [2] Colla, Sebastien, and Julien M. Hendrickx. "Automatic Performance Estimation
+%       for Decentralized Optimization" (2022).
 
 verbose = 0;            % print the problem set up and the results
 trace_heuristic = 0;    % heuristic to minimize the dimension of the worst-case (1 to activate)

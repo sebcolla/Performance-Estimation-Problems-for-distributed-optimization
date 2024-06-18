@@ -1,5 +1,6 @@
 function out = DGD_agents(Settings)
-% Compute the worst-case performance of DGD [1] under the 'Settings' provided
+% Compute the worst-case performance of DGD [1] under the 'Settings' provided, 
+% using the agent-dependent PEP formulation [2].
 % INPUT:
 %   Settings: structure with all the settings to use in the PEP for DGD. 
 %   The structure can include the following fields:
@@ -46,9 +47,11 @@ function out = DGD_agents(Settings)
 %       iterates (X) and gradients (g) if 'eval_out = 1' in the code
 %       the worst-case averaging matrix (Wh) if 'estim_W = 1' in the code 
 %
-% Reference
+% References
 %   [1] Angelia Nedic and Asuman Ozdaglar. Distributed subgradient methods 
 %       for multi-agent optimization. IEEE Transactions on Automatic Control, 2009.
+%   [2] Colla, Sebastien, and Julien M. Hendrickx. "Automatic Performance Estimation
+%       for Decentralized Optimization" (2022).
 
 
 verbose = 0;            % print the problem set up and the results

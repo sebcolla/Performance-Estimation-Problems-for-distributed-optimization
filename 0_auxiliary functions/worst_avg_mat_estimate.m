@@ -37,6 +37,6 @@ function [Wh,r,status] = worst_avg_mat_estimate(lam,X,Y,n)
             if r <= 0.01
                 status = status + " - success";
             else
-                status = "No worst-matrix";
+                status = "No valid worst-case averaging matrix";
             end
 end
