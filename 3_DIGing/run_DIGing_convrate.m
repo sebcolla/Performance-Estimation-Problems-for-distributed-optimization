@@ -39,6 +39,7 @@ for alpha=alphaspace
     S.init.gamma = alpha;
     out_alpha{il} = DIGing_agents(S);
     wc_alpha(il) = out_alpha{il}.WCperformance;
+    il = il + 1;
     save(filename)
 end
 
@@ -47,9 +48,8 @@ end
 f1 = figure();
 loglog(alphaspace,wc_alpha,'o-b','MarkerSize',2,'MarkerFaceColor', 'b','LineWidth',2); hold on;
 ylim([0.999,1.001]);
-xlabel("$\lambda(W)$ (SLEM)","FontSize",15,"Interpreter","Latex");
-ylabel("$f(x_{\mathrm{av}}) - f(x^*)$","FontSize",14, 'Interpreter','Latex');
-legend('Spectral PEP bound','Exact PEP bound for $\hat{W}^* = (1+\lambda) \frac{\mathbf{11}^T}{n} - \lambda I$','FontSize',13,'Location','NorthWest',"Interpreter","Latex");
+xlabel("step-size $\alpha$","Interpreter","Latex","FontSize",15);
+ylabel("convergence rate","Interpreter","Latex","FontSize",15);
 
 %% save plot
 % SAVE PDF
