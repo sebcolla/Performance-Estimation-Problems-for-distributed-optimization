@@ -91,7 +91,7 @@ returnOpt = 0; % or 1 if you need the optimal point of each local function
 
 % Iterates cells
 X = cell(n, t+1);       % local iterates
-S = cell(n, t);         % S contains the local estimates of the global gradient
+S = cell(n, t+1);       % S contains the local estimates of the global gradient
 F_saved = cell(n,t+1);
 G_saved = cell(n,t+1);
 
@@ -141,16 +141,12 @@ for k = 1:t
     if ATC % ATC-DIGing
         X(:,k+1) = W.consensus(foreach(@(x,S) x-alpha(k)*S, X(:,k), S(:,k)));
         [G_saved(:,k+1),F_saved(:,k+1)] = LocalOracles(Fi,X(:,k+1));
-        if k<t || strcmp(perf,'navg_it_err_combined_grad')
-            S(:,k+1) = W.consensus(foreach(@(s,G2,G1) s + G2-G1, S(:,k), G_saved(:,k+1), G_saved(:,k)));
-        end
+        S(:,k+1) = W.consensus(foreach(@(s,G2,G1) s + G2-G1, S(:,k), G_saved(:,k+1), G_saved(:,k)));
     else % DIGing
         X(:,k+1) = foreach(@(Wx,S) Wx-alpha(k)*S, W.consensus(X(:,k)), S(:,k)); % update for each agent
         %          foreach(expression for the update, cells of variables to input in the expression)
         [G_saved(:,k+1),F_saved(:,k+1)] = LocalOracles(Fi,X(:,k+1));
-        if k<t || strcmp(perf,'navg_it_err_combined_grad')
-            S(:,k+1) = foreach(@(Ws,G2,G1) Ws + G2-G1, W.consensus(S(:,k)), G_saved(:,k+1), G_saved(:,k));
-        end
+        S(:,k+1) = foreach(@(Ws,G2,G1) Ws + G2-G1, W.consensus(S(:,k)), G_saved(:,k+1), G_saved(:,k));
     end
 end
 
