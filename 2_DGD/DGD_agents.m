@@ -72,10 +72,10 @@ eq_start=Settings.eq_start; init=Settings.init; perf=Settings.perf;
 fctClass=Settings.fctClass; fctParam=Settings.fctParam;
 
 if verbose
-    fprintf("Settings provided for the PEP:\n");
+    fprintf("------------------------------------------------------------------------------------------\n");
+    fprintf("Settings provided for the agent-dependent PEP:\n");
     fprintf("n=%d, t=%d, alpha=%1.2f, type=%s, tv_mat=%d, eq_start=%d,\ninit_x=%s, init_grad=%s, perf=%s, fctClass=%s,\n",n,t,alpha(1),type,tv_mat,eq_start,init.x,init.grad,perf,fctClass);
     fprintf('avg_mat = ['); fprintf('%g ', mat); fprintf(']\n');
-    fprintf("------------------------------------------------------------------------------------------\n");
 end
 
 % (0) Initialize an empty PEP
@@ -215,13 +215,12 @@ if estim_W
 end
 
 if verbose
-    out
-    fprintf("--------------------------------------------------------------------------------------------\n");
     switch type
         case 'spectral_relaxed'
             fprintf("Performance guarantee obtained with PESTO: %1.2f  (valid for any symmetric doubly stochastic matrix such that |lam_2|<=%1.1f)\n",out.WCperformance, max(abs(mat)));
         case 'exact'
             fprintf("Performance guarantee obtained with PESTO: %1.2f  (only valid for the specific matrix W)\n",out.WCperformance);
     end
+    fprintf("------------------------------------------------------------------------------------------\n");
 end
 end

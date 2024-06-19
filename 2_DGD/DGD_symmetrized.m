@@ -78,11 +78,11 @@ end
 assert(strcmp(type,'spectral_relaxed'),"DGD_symmetrized only applies to spectral description of the averaging matrix (range of eigenvalues)");
 
 if verbose
-    fprintf("Settings provided for the PEP:\n");
+    fprintf("------------------------------------------------------------------------------------------\n");
+    fprintf("Settings provided for the compact PEP:\n");
     fprintf('nlist = ['); fprintf('%g ', nlist); fprintf('] ');
     fprintf("ninf=%d, t=%d, alpha=%1.2f, type=%s, tv_mat=%d, eq_start=%d,\ninit_x=%s, init_grad=%s, perf=%s, fctClass=%s,\n",ninf,t,alpha(1),type,tv_mat,eq_start,init.x,init.grad,perf,fctClass);
     fprintf('avg_mat = ['); fprintf('%g ', lamW); fprintf(']\n');
-    fprintf("------------------------------------------------------------------------------------------\n");
 end
 
 % Network of agents
@@ -397,7 +397,9 @@ if estim_W
     end
     out.Wh = Wh;
 end
-
+if verbose
+    fprintf("------------------------------------------------------------------------------------------\n");
+end
 end
 
 

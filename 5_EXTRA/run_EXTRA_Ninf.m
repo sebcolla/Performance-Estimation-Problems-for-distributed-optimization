@@ -1,35 +1,48 @@
-% constant parameters
-lam = 0.5;
-Ninf = 1;
+% Script to compute and plot the p-th percentile worst-case performance of EXTRA
+% when the number of agents goes to infinity (n->inf).
+% This performance is plotted as a function of the given percentile p 
+% (for different numbers of iterations t).
+% See details in:
+%    S. Colla and J. M. Hendrickx, "Exploiting Agent Symmetries for Performance Analysis of Distributed
+%    Optimization Methods", 2024.
 
-eq_start = 0;
-time_var_mat = 0;
+clear all;
 
-init.type = 'uniform_bounded_iterr_local_grad*';
+%% constant parameters
+S.lam = 0.5;
+S.ninf = 1;
 
+S.eq_start = 0;
+S.time_var_mat = 0;
 
-fctParam.L = 1;
-fctParam.mu = 0.1;
+S.init.x = 'uniform_bounded_it_err';
+S.init.grad = 'uniform_bounded_grad*';
 
-perf = "it_err_last_percentile_worst";
+S.fctClass = 'SmoothStronglyConvex';
+S.fctParam.L = 1;
+S.fctParam.mu = 0.1;
 
-alpha = 0.78;
+S.perf = "it_err_last_percentile_worst";
 
-Klist = [15];
+S.alpha = 0.78;
+
+tlist = [10,15];
 perc = [0.01,0.1:0.1:0.7,0.75,0.8,0.85,0.875,0.9,0.925,0.95,0.96,0.97,0.98,0.99];
 
-d1 = cell(length(Klist),length(perc));
-wc = zeros(length(Klist),length(perc));
-filename = "new_data/EXTRA_wc_lam05_Ninf_00";
+d1 = cell(length(tlist),length(perc));
+wc = zeros(length(tlist),length(perc));
+filename = "data/EXTRA_wc_lam05_ninf";
 
 %% run PEP for EXTRA
 ik = 1; 
-for K=Klist
+for t=tlist
     ip = 1;
+    S.t = t;
     for p1=perc
-        fprintf("K = %d, p=%.2f \n",K,p1);
-        Nproplist = [1-p1,0,p1];
-        d1{ik,ip} = EXTRA_symmetrized(Nproplist,K,alpha,lam,time_var_mat,eq_start,init,perf,fctParam,Ninf);
+        fprintf("t = %d, p=%.2f \n",t,p1);
+        nproplist = [1-p1,0,p1];
+        S.nlist = nproplist;
+        d1{ik,ip} = EXTRA_symmetrized(S);
         wc(ik,ip) = d1{ik,ip}.WCperformance;
         ip = ip+1;
         save(filename)
@@ -38,9 +51,9 @@ for K=Klist
 end
 
 %% PLOT results
-%load('C:\Users\secolla\Documents\UCL\PhD\code\CLEAN codes\symmetrized form\new data\EXTRA_wc_lam05_Ninf4.mat')
+%load('data\EXTRA_wc_lam05_ninf.mat')
 f1 = figure();
-plot([perc,1]*100,[wc(1:4,:),2*ones(4,1)],'.-','LineWidth',2,'MarkerSize',15); hold on;
+plot([perc,1]*5,[wc,100*ones(length(tlist),1)],'.-','LineWidth',2,'MarkerSize',15); hold on;
 xlabel("k (percentage of agents)","FontSize",14,"Interpreter","Latex");
 ylabel("\textbf{k--th} ~Percentile Performance","FontSize",14,"Interpreter","Latex");
 ylim([0,1])
