@@ -6,7 +6,7 @@
 %    S. Colla and J. M. Hendrickx, "Exploiting Agent Symmetries for Performance Analysis of Distributed
 %    Optimization Methods", 2024.
 
-clear all;
+clear;
 
 %% constant parameters
 S.lam = 0.5;
@@ -57,10 +57,10 @@ plot([perc,1]*5,[wc,100*ones(length(tlist),1)],'.-','LineWidth',2,'MarkerSize',1
 xlabel("k (percentage of agents)","FontSize",14,"Interpreter","Latex");
 ylabel("\textbf{k--th} ~Percentile Performance","FontSize",14,"Interpreter","Latex");
 ylim([0,1])
-legend("$t=10$","$t=15$","$t=20$","$t=25$","FontSize",12,"Interpreter","Latex","Location","NorthWest");
+legend("$t=10$","$t=15$","FontSize",12,"Interpreter","Latex","Location","NorthWest");
 
 %% save plot
 % SAVE PDF
 % set(f1,'PaperSize',[14, 10.1]); %set the paper size to what you want
-% file_name = 'EXTRA_wb_it_Ninf'; %wc_lamevol_N3_K10_eqref_update';
-% print(f1,sprintf('../../hybrid sym form/plots_pdf/%s',file_name),'-dpdf'); % then print it
+% file_name = 'EXTRA_wb_it_ninf';
+% print(f1,file_name,'-dpdf'); % then print it

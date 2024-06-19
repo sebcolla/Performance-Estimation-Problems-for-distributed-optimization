@@ -9,7 +9,7 @@
 %    S. Colla and J. M. Hendrickx, "Exploiting Agent Symmetries for Performance Analysis of Distributed
 %    Optimization Methods", 2024.
 
-clear all;
+clear;
 
 %% constant parameters
 S.t = 15;

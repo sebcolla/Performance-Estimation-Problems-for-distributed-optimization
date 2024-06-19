@@ -57,7 +57,7 @@ function out = DGD_agents(Settings)
 verbose = 0;            % print the problem set up and the results
 trace_heuristic = 0;    % heuristic to minimize the dimension of the worst-case (1 to activate)
 eval_out = 0;           % evaluate the worst-case local iterates and gradients and add them to the output
-estim_W = 0;            % estimate the worst-case averaging matrix
+estim_W = 1;            % estimate the worst-case averaging matrix
 
 %%% Set up performance estimation settings %%%
 if nargin == 1
