@@ -32,7 +32,7 @@ out_exact = cell(length(lamspace),1);
 wc_exact = zeros(length(lamspace),1);
 filename = "data/DGD_wc_lamevol";
 
-%% run PEP for EXTRA
+%% solve PEP for DGD for different lam values
 il= 1;
 for lam=lamspace
     fprintf("lam = %1.2f \n",lam);
