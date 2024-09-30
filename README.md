@@ -2,7 +2,7 @@
 
 This repository contains the codes used in my thesis:
     
-S. Colla, *Computer-Aided Analysis of Decentralized Optimization Methods*, UCLouvain, 2024.
+S. Colla, *Computer-Aided Analysis of Decentralized Optimization Methods*, PhD thesis, UCLouvain, 2024. [PDF](https://dial.uclouvain.be/pr/boreal/object/boreal:291924)
 
 
 It gather codes used in different paper:
