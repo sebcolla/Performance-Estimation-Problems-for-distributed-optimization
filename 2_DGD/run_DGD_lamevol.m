@@ -1,10 +1,8 @@
-% Script to compute and plot the p-th percentile worst-case performance of EXTRA
-% when the number of agents goes to infinity (n->inf).
-% This performance is plotted as a function of the given percentile p
-% (for different numbers of iterations t).
-% See details in:
-%    S. Colla and J. M. Hendrickx, "Exploiting Agent Symmetries for Performance Analysis of Distributed
-%    Optimization Methods", 2024.
+% Script to compute and plot the worst-case performance of DGD 
+% for different values of lambda (second-largest eigenvalue modulus of W).
+% The performance measure is the running average functional error of DGD
+% after t=10: avg_k avg_i (f_i(x_i^k) - f_i(x^*)).
+% The local functions are 'ConvexBoundedGradient'.
 
 clear;
 

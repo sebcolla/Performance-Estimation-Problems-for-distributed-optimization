@@ -1,10 +1,6 @@
-% Script to compute and plot the p-th percentile worst-case performance of EXTRA
-% when the number of agents goes to infinity (n->inf).
-% This performance is plotted as a function of the given percentile p
-% (for different numbers of iterations t).
-% See details in:
-%    S. Colla and J. M. Hendrickx, "Exploiting Agent Symmetries for Performance Analysis of Distributed
-%    Optimization Methods", 2024.
+% Script to compute and plot the worst-case convergence rate of DIGing 
+% for different step-size values (alpha), with 'SmoothStronglyConvex' local
+% functions.
 
 clear;
 
